@@ -6,7 +6,11 @@ import io
 import zipfile
 
 # Configurazione Pagina
-st.set_page_config(page_title="PhotoBook Mockup PRO", layout="wide")
+st.set_page_config(page_title="PhotoBook PRO: Template fissi", layout="wide")
+
+# Inizializzazione della memoria dell'app (Session State)
+if 'database_templates' not in st.session_state:
+    st.session_state['database_templates'] = {}
 
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
@@ -30,8 +34,9 @@ def find_book_region(tmpl_gray, bg_val):
 def process_image(tmpl_pil, cover_pil):
     tmpl_orig = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
-    h, w = tmpl_gray.shape
     cover_rgb = cover_pil.convert('RGB')
+    bg_val = float(np.median([tmpl_gray[5,5], tmpl_gray[5,w-5], tmpl_gray[h-5,5], tmpl_gray[h-5,w-5]])) if 'w' in locals() else 127
+    h, w = tmpl_gray.shape
     bg_val = float(np.median([tmpl_gray[5,5], tmpl_gray[5,w-5], tmpl_gray[h-5,5], tmpl_gray[h-5,w-5]]))
     reg = find_book_region(tmpl_gray, bg_val)
     if not reg: return None
@@ -47,50 +52,66 @@ def process_image(tmpl_pil, cover_pil):
         result[reg['y1']:reg['y2']+1, reg['x1']:reg['fx1'], :] = spine_color * spine_ratio
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-# --- NUOVA INTERFACCIA ---
-st.sidebar.title("🛠️ Impostazioni")
-tipo_formato = st.sidebar.radio(
-    "1. Seleziona il gruppo:",
-    ('Verticali', 'Orizzontali', 'Quadrati')
-)
+# --- SIDEBAR: GESTIONE TEMPLATE ---
+st.sidebar.header("📁 1. SETUP TEMPLATE (Una Tantum)")
+tipo = st.sidebar.selectbox("Seleziona categoria da caricare:", ["Verticali", "Orizzontali", "Quadrati"])
+up_tmpls = st.sidebar.file_uploader(f"Carica template {tipo}", accept_multiple_files=True, key="setup_tmpls")
 
-st.title(f"📖 Generatore Mockup: {tipo_formato}")
-st.write("Carica i template una volta sola, poi carica tutti i design e scarica lo ZIP.")
+if st.sidebar.button("Salva Template in Memoria"):
+    if up_tmpls:
+        st.session_state['database_templates'][tipo] = []
+        for f in up_tmpls:
+            img = Image.open(f).convert('RGB')
+            st.session_state['database_templates'][tipo].append({'name': f.name, 'img': img})
+        st.sidebar.success(f"Salvati {len(up_tmpls)} template {tipo}")
+    else:
+        st.sidebar.error("Carica i file prima!")
 
-col1, col2 = st.columns(2)
+# Visualizzazione stato memoria
+st.sidebar.write("---")
+st.sidebar.write("**Template in memoria:**")
+for k in st.session_state['database_templates'].keys():
+    st.sidebar.write(f"✅ {k}: {len(st.session_state['database_templates'][k])} file")
 
-with col1:
-    st.subheader("📂 Template Bianchi")
-    # Qui carichi i template 15x22, 20x30 ecc. solo una volta
-    uploaded_templates = st.file_uploader(f"Carica i file bianchi {tipo_formato}", accept_multiple_files=True, key="tmpls")
+if st.sidebar.button("Svuota Memoria"):
+    st.session_state['database_templates'] = {}
+    st.rerun()
 
-with col2:
-    st.subheader("🖼️ Design Grafici")
-    # Qui carichi le 100+ grafiche
-    uploaded_designs = st.file_uploader("Carica le copertine colorate", accept_multiple_files=True, key="designs")
+# --- AREA DI LAVORO PRINCIPALE ---
+st.title("🚀 Generatore Mockup Rapido")
 
-if st.button("🚀 AVVIA ELABORAZIONE"):
-    if not uploaded_templates or not uploaded_designs:
-        st.error("Devi caricare sia i template che i design!")
+formato_lavoro = st.selectbox("Su quale formato vuoi lavorare adesso?", ["Verticali", "Orizzontali", "Quadrati"])
+
+st.subheader(f"🖼️ Carica i Design per: {formato_lavoro}")
+disegni = st.file_uploader("Trascina qui le immagini colorate", accept_multiple_files=True, key="lavoro_disegni")
+
+if st.button("AVVIA GENERAZIONE"):
+    if formato_lavoro not in st.session_state['database_templates'] or not st.session_state['database_templates'][formato_lavoro]:
+        st.error(f"Non hai caricato i template {formato_lavoro} nella barra a sinistra!")
+    elif not disegni:
+        st.error("Carica le immagini dei design!")
     else:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-            bar = st.progress(0)
-            total = len(uploaded_designs) * len(uploaded_templates)
-            curr = 0
-            for d_file in uploaded_designs:
+            progress_bar = st.progress(0)
+            templates_fissi = st.session_state['database_templates'][formato_lavoro]
+            
+            total = len(disegni) * len(templates_fissi)
+            count = 0
+            
+            for d_file in disegni:
                 d_img = Image.open(d_file)
                 d_name = os.path.splitext(d_file.name)[0]
-                for t_file in uploaded_templates:
-                    t_img = Image.open(t_file)
-                    t_name = os.path.splitext(t_file.name)[0]
-                    res = process_image(t_img, d_img)
-                    if res:
-                        buf = io.BytesIO()
-                        res.save(buf, format='JPEG', quality=90)
-                        zip_file.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
-                    curr += 1
-                    bar.progress(curr / total)
-        
-        st.success("✅ Elaborazione completata!")
-        st.download_button("📥 SCARICA ZIP RISULTATI", data=zip_buffer.getvalue(), file_name=f"Mockups_{tipo_formato}.zip")
+                
+                for t_data in templates_fissi:
+                    res_img = process_image(t_data['img'], d_img)
+                    if res_img:
+                        img_io = io.BytesIO()
+                        res_img.save(img_io, format='JPEG', quality=90)
+                        zip_file.writestr(f"{d_name}/{t_data['name']}", img_io.getvalue())
+                    
+                    count += 1
+                    progress_bar.progress(count / total)
+            
+            st.success(f"Fatto! Generati {count} mockup.")
+            st.download_button("📥 SCARICA ZIP", data=zip_buffer.getvalue(), file_name=f"Mockup_{formato_lavoro}.zip")
