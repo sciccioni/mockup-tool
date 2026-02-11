@@ -96,11 +96,11 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         center_x = np.argmax(col_brightness)
         
         # Parto dal centro e mi espando fino a trovare bordi scuri
-        # Bordo sinistro
+        # Bordo sinistro - cerco dove scende sotto threshold
         app_bx1 = center_x
         for x in range(center_x, -1, -1):
             col = tmpl_gray[:, x]
-            if np.mean(col) < 200:  # Trovato bordo scuro
+            if np.mean(col) < 180:  # Threshold più basso per catturare meglio
                 app_bx1 = x + 1
                 break
         
@@ -108,7 +108,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         app_bx2 = center_x
         for x in range(center_x, w):
             col = tmpl_gray[:, x]
-            if np.mean(col) < 200:  # Trovato bordo scuro
+            if np.mean(col) < 180:
                 app_bx2 = x - 1
                 break
         
@@ -117,20 +117,20 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         
         app_by1 = 0
         for y in range(h):
-            if row_brightness[y] > 200:
+            if row_brightness[y] > 180:
                 app_by1 = y
                 break
         
         app_by2 = h - 1
         for y in range(h-1, -1, -1):
-            if row_brightness[y] > 200:
+            if row_brightness[y] > 180:
                 app_by2 = y
                 break
         
         app_w = app_bx2 - app_bx1 + 1
         app_h = app_by2 - app_by1 + 1
         
-        bleed = 15
+        bleed = 20  # Aumentato over-bleeding per coprire meglio
         
         cover_big = np.array(
             Image.fromarray(cover.astype(np.uint8)).resize(
@@ -143,7 +143,9 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
         
         book_tmpl = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
-        book_ratio = np.minimum(book_tmpl / face_val, 1.0)
+        
+        # Uso face_val calcolato all'inizio per il ratio
+        book_ratio = np.minimum(book_tmpl / 246.0, 1.0)  # Valore fisso per template base
         
         for c in range(3):
             result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * book_ratio
