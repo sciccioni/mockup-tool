@@ -173,14 +173,8 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
         else:
             cols = st.columns(4)
             for idx, (fname, img) in enumerate(items.items()):
-                # Creo un'anteprima ridimensionata per uniformare la visualizzazione
-                # Altezza fissa 300px mantenendo le proporzioni
-                preview_height = 300
-                aspect_ratio = img.width / img.height
-                preview_width = int(preview_height * aspect_ratio)
-                preview_img = img.resize((preview_width, preview_height), Image.LANCZOS)
-                
-                cols[idx % 4].image(preview_img, caption=fname, use_container_width=True)
+                # Uso use_column_width per dimensioni uniformi gestite da Streamlit
+                cols[idx % 4].image(img, caption=fname, use_column_width=True)
 
 st.divider()
 
