@@ -90,26 +90,37 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
     if "base_copertina" in template_name.lower():
         # Template base: copro TUTTA l'area senza cercare dorso/face
-        bleed = 5
+        # OVER-BLEEDING MASSIMO per eliminare TUTTE le linee bianche
+        bleed = 10
         
-        # Resize con over-bleeding MASSIMO
+        # Estendo anche l'area oltre i bordi rilevati
+        extend = 5
+        ext_bx1 = max(0, bx1 - extend)
+        ext_bx2 = min(w - 1, bx2 + extend)
+        ext_by1 = max(0, by1 - extend)
+        ext_by2 = min(h - 1, by2 + extend)
+        
+        ext_w = ext_bx2 - ext_bx1 + 1
+        ext_h = ext_by2 - ext_by1 + 1
+        
+        # Resize con over-bleeding ENORME
         cover_big = np.array(
             Image.fromarray(cover.astype(np.uint8)).resize(
-                (target_w + bleed*2, target_h + bleed*2), Image.LANCZOS
+                (ext_w + bleed*2, ext_h + bleed*2), Image.LANCZOS
             )
         ).astype(np.float64)
         
         # Crop dal centro
-        cover_final = cover_big[bleed:bleed+target_h, bleed:bleed+target_w]
+        cover_final = cover_big[bleed:bleed+ext_h, bleed:bleed+ext_w]
         
         result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
         
-        # Applico la cover su TUTTA l'area del libro
-        book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
+        # Applico la cover su TUTTA l'area ESTESA del libro
+        book_tmpl = tmpl_gray[ext_by1:ext_by2+1, ext_bx1:ext_bx2+1]
         book_ratio = np.minimum(book_tmpl / face_val, 1.0)
         
         for c in range(3):
-            result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
+            result[ext_by1:ext_by2+1, ext_bx1:ext_bx2+1, c] = cover_final[:, :, c] * book_ratio
             
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
     
