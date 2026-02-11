@@ -14,6 +14,10 @@ if 'uploader_key' not in st.session_state:
 # --- SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
+    # Template base
+    if "base_copertina_verticale" in fn: return "Verticali"
+    if "base_copertina_orizzontale" in fn: return "Orizzontali"
+    # Template specifici per dimensione
     if any(x in fn for x in ["15x22", "20x30"]): return "Verticali"
     if any(x in fn for x in ["20x15", "27x20", "32x24", "40x30"]): return "Orizzontali"
     if any(x in fn for x in ["20x20", "30x30"]): return "Quadrati"
