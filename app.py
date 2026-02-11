@@ -135,10 +135,8 @@ def load_fixed_templates():
         st.warning(f"⚠️ Cartella '{base_path}' non trovata!")
         return lib
     
-    files_found = []
     for f_name in os.listdir(base_path):
         if f_name.lower().endswith(('.jpg', '.jpeg', '.png')):
-            files_found.append(f_name)
             cat = get_manual_cat(f_name)
             if cat in lib:
                 try:
@@ -147,30 +145,43 @@ def load_fixed_templates():
                 except Exception as e:
                     st.error(f"Errore caricamento {f_name}: {e}")
     
-    # Debug info
-    if files_found:
-        st.info(f"📁 Template trovati: {len(files_found)} - {', '.join(files_found)}")
-    else:
-        st.warning("⚠️ Nessun template trovato nella cartella templates/")
-    
     return lib
 
 @st.cache_data
 def get_template_thumbnails():
-    """Crea thumbnail uniformi per le anteprime"""
+    """Crea thumbnail uniformi per le anteprime - DIMENSIONI FISSE"""
     lib = load_fixed_templates()
     thumbs = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
     
-    max_height = 250
+    # Dimensioni fisse per i thumbnail
+    thumb_width = 300
+    thumb_height = 300
+    
     for cat in lib:
         for fname, img in lib[cat].items():
-            aspect = img.width / img.height
-            if img.height > max_height:
-                new_height = max_height
-                new_width = int(new_height * aspect)
-                thumb = img.resize((new_width, new_height), Image.LANCZOS)
+            # Resize con dimensioni fisse - l'immagine viene centrata su sfondo grigio
+            thumb = Image.new('RGB', (thumb_width, thumb_height), (240, 240, 240))
+            
+            # Calcolo proporzioni per fit
+            img_aspect = img.width / img.height
+            thumb_aspect = thumb_width / thumb_height
+            
+            if img_aspect > thumb_aspect:
+                # Immagine più larga - fit sulla larghezza
+                new_width = thumb_width
+                new_height = int(thumb_width / img_aspect)
             else:
-                thumb = img
+                # Immagine più alta - fit sull'altezza
+                new_height = thumb_height
+                new_width = int(thumb_height * img_aspect)
+            
+            resized = img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Centro l'immagine
+            x = (thumb_width - new_width) // 2
+            y = (thumb_height - new_height) // 2
+            thumb.paste(resized, (x, y))
+            
             thumbs[cat][fname] = thumb
     
     return lib, thumbs
