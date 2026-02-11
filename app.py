@@ -6,12 +6,12 @@ import io
 import zipfile
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 STABILE", layout="wide")
+st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FINAL", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- SMISTAMENTO CATEGORIE (Tua lista esatta) ---
+# --- SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["15x22", "20x30"]): return "Verticali"
@@ -20,7 +20,7 @@ def get_manual_cat(filename):
     return "Altro"
 
 # ===================================================================
-# LOGICA V3 FINAL ORIGINALE + FIX OVERLAP
+# LOGICA V3 FINAL (ORIGINALE CON FIX RIGA BIANCA)
 # ===================================================================
 
 def find_book_region(tmpl_gray, bg_val):
@@ -59,10 +59,10 @@ def find_book_region(tmpl_gray, bg_val):
         'face_val': face_val,
     }
 
-def composite_v3_stabile(tmpl_pil, cover_pil):
+def composite_v3_fixed(tmpl_pil, cover_pil):
     tmpl = np.array(tmpl_pil).astype(np.float64)
     
-    # Grayscale V3 originale
+    # Luminanza V3 originale
     if tmpl.ndim == 3:
         tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2])
     else:
@@ -83,30 +83,35 @@ def composite_v3_stabile(tmpl_pil, cover_pil):
     spine_w = region['spine_w']
     face_w, face_h = region['face_w'], region['face_h']
     face_val = region['face_val']
+
+    # --- FIX RIGA BIANCA: Overlap di 1 pixel ---
+    # Resiziamo la cover per essere un pixel più larga a sinistra
+    draw_fx1 = max(bx1, fx1 - 1)
+    draw_face_w = bx2 - draw_fx1 + 1
     
     cover_resized = np.array(
-        Image.fromarray(cover.astype(np.uint8)).resize((face_w, face_h), Image.LANCZOS)
+        Image.fromarray(cover.astype(np.uint8)).resize((draw_face_w, face_h), Image.LANCZOS)
     ).astype(np.float64)
     
+    # Spine color (dalla striscia originale della cover)
     spine_strip_w = max(1, face_w // 20)
     spine_color = np.median(cover_resized[:, :spine_strip_w].reshape(-1, 3), axis=0)
     
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
-    # FIX: Disegniamo il dorso facendolo finire 1 pixel dopo (overlap)
+    # 1. SPINE (Originale)
     if spine_w > 0:
-        end_spine = min(bx2, fx1 + 1) 
-        spine_tmpl = tmpl_gray[by1:by2+1, bx1:end_spine]
+        spine_tmpl = tmpl_gray[by1:by2+1, bx1:fx1]
         spine_ratio = spine_tmpl / face_val
         for c in range(3):
-            result[by1:by2+1, bx1:end_spine, c] = spine_color[c] * spine_ratio
+            result[by1:by2+1, bx1:fx1, c] = spine_color[c] * spine_ratio
     
-    # FACCIA: copre l'overlap e chiude il buco
-    face_tmpl = tmpl_gray[by1:by2+1, fx1:bx2+1]
+    # 2. FACE (Con sovrapposizione di 1px per chiudere il refuso)
+    face_tmpl = tmpl_gray[by1:by2+1, draw_fx1:bx2+1]
     face_ratio = np.minimum(face_tmpl / face_val, 1.05)
     
     for c in range(3):
-        result[by1:by2+1, fx1:bx2+1, c] = cover_resized[:, :, c] * face_ratio
+        result[by1:by2+1, draw_fx1:bx2+1, c] = cover_resized[:, :, c] * face_ratio
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
@@ -133,7 +138,7 @@ tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
 for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
     with tab:
         items = libreria[name]
-        if not items: st.info("Templates mancanti su GitHub.")
+        if not items: st.info("Templates non trovati.")
         else:
             cols = st.columns(4)
             for idx, (fname, img) in enumerate(items.items()):
@@ -146,15 +151,15 @@ col_sel, col_del = st.columns([3, 1])
 with col_sel:
     scelta = st.radio("Seleziona formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
 with col_del:
-    if st.button("🧹 SVUOTA DESIGN"):
+    if st.button("🗑️ SVUOTA DESIGN"):
         st.session_state.uploader_key += 1
         st.rerun()
 
-disegni = st.file_uploader(f"Carica i design {scelta}", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
+disegni = st.file_uploader(f"Carica design {scelta}", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
 
-if st.button("🚀 GENERA MOCKUP"):
+if st.button("🚀 GENERA TUTTI"):
     if not disegni or not libreria[scelta]:
-        st.error("Dati mancanti!")
+        st.error("Mancano i file!")
     else:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -166,12 +171,12 @@ if st.button("🚀 GENERA MOCKUP"):
                 d_img = Image.open(d_file)
                 d_name = os.path.splitext(d_file.name)[0]
                 for t_name, t_img in target_tmpls.items():
-                    res = composite_v3_stabile(t_img, d_img)
+                    res = composite_v3_fixed(t_img, d_img)
                     if res:
                         buf = io.BytesIO()
                         res.save(buf, format='JPEG', quality=95, subsampling=0)
                         zip_file.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
                     count += 1
                     bar.progress(count / total)
-        st.success("✅ Fatto! ZIP pronto.")
+        st.success("✅ Completato!")
         st.download_button("📥 SCARICA ZIP", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}.zip")
