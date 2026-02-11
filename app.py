@@ -89,7 +89,68 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     target_h = by2 - by1 + 1
     
     # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
-    if "base_copertina" in template_name.lower() or "base_bottom_app" in template_name.lower():
+    if "base_bottom_app" in template_name.lower():
+        # base_bottom_app: trova SOLO l'area bianca centrale, ignora ombre scure
+        # Cerco la colonna più bianca (centro del libro)
+        col_brightness = np.mean(tmpl_gray, axis=0)
+        center_x = np.argmax(col_brightness)
+        
+        # Parto dal centro e mi espando fino a trovare bordi scuri
+        # Bordo sinistro
+        app_bx1 = center_x
+        for x in range(center_x, -1, -1):
+            col = tmpl_gray[:, x]
+            if np.mean(col) < 200:  # Trovato bordo scuro
+                app_bx1 = x + 1
+                break
+        
+        # Bordo destro  
+        app_bx2 = center_x
+        for x in range(center_x, w):
+            col = tmpl_gray[:, x]
+            if np.mean(col) < 200:  # Trovato bordo scuro
+                app_bx2 = x - 1
+                break
+        
+        # Bordi verticali - cerco l'area bianca
+        row_brightness = np.mean(tmpl_gray, axis=1)
+        
+        app_by1 = 0
+        for y in range(h):
+            if row_brightness[y] > 200:
+                app_by1 = y
+                break
+        
+        app_by2 = h - 1
+        for y in range(h-1, -1, -1):
+            if row_brightness[y] > 200:
+                app_by2 = y
+                break
+        
+        app_w = app_bx2 - app_bx1 + 1
+        app_h = app_by2 - app_by1 + 1
+        
+        bleed = 15
+        
+        cover_big = np.array(
+            Image.fromarray(cover.astype(np.uint8)).resize(
+                (app_w + bleed*2, app_h + bleed*2), Image.LANCZOS
+            )
+        ).astype(np.float64)
+        
+        cover_final = cover_big[bleed:bleed+app_h, bleed:bleed+app_w]
+        
+        result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
+        
+        book_tmpl = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
+        book_ratio = np.minimum(book_tmpl / face_val, 1.0)
+        
+        for c in range(3):
+            result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * book_ratio
+            
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+    
+    if "base_copertina" in template_name.lower():
         # Template base: IGNORO la rilevazione automatica e copro TUTTO
         # Trovo MANUALMENTE i bordi REALI del libro senza fidarmi dell'algoritmo
         
