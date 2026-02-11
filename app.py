@@ -6,7 +6,7 @@ import io
 import zipfile
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FINAL", layout="wide")
+st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FIXED", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -20,7 +20,7 @@ def get_manual_cat(filename):
     return "Altro"
 
 # ===================================================================
-# LOGICA V3 FINAL (ORIGINALE CON FIX RIGA BIANCA)
+# LOGICA V3 FIXED - OVERLAP AUMENTATO A 3 PIXEL
 # ===================================================================
 
 def find_book_region(tmpl_gray, bg_val):
@@ -84,9 +84,10 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     face_w, face_h = region['face_w'], region['face_h']
     face_val = region['face_val']
 
-    # --- FIX RIGA BIANCA: Overlap di 1 pixel ---
-    # Resiziamo la cover per essere un pixel più larga a sinistra
-    draw_fx1 = max(bx1, fx1 - 1)
+    # --- FIX RIGA BIANCA: Overlap di 3 pixel ---
+    # Resiziamo la cover per essere 3 pixel più larga a sinistra
+    overlap_pixels = 3
+    draw_fx1 = max(bx1, fx1 - overlap_pixels)
     draw_face_w = bx2 - draw_fx1 + 1
     
     cover_resized = np.array(
@@ -106,7 +107,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
         for c in range(3):
             result[by1:by2+1, bx1:fx1, c] = spine_color[c] * spine_ratio
     
-    # 2. FACE (Con sovrapposizione di 1px per chiudere il refuso)
+    # 2. FACE (Con sovrapposizione di 3px per eliminare completamente la banda bianca)
     face_tmpl = tmpl_gray[by1:by2+1, draw_fx1:bx2+1]
     face_ratio = np.minimum(face_tmpl / face_val, 1.05)
     
@@ -132,7 +133,7 @@ def load_fixed_templates():
 libreria = load_fixed_templates()
 
 # --- INTERFACCIA ---
-st.title("📖 PhotoBook Mockup Compositor - V3 Final")
+st.title("📖 PhotoBook Mockup Compositor - V3 Fixed (No White Lines)")
 
 tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
 for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
