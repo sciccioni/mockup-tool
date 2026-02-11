@@ -6,12 +6,12 @@ import io
 import zipfile
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="PhotoBook PRO - V3 Original Logic", layout="wide")
+st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 Final", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- LOGICA DI SMISTAMENTO (Tua suddivisione richiesta) ---
+# --- LOGICA DI SMISTAMENTO (Tua suddivisione) ---
 def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["15x22", "20x30"]): return "Verticali"
@@ -19,7 +19,10 @@ def get_manual_cat(filename):
     if any(x in fn for x in ["20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
-# --- FUNZIONI ORIGINALI V3 FINAL (COPIATE INTEGRALMENTE) ---
+# ===================================================================
+# FUNZIONI ORIGINALI V3 FINAL (COPIATE INTEGRALMENTE DAL TUO TESTO)
+# ===================================================================
+
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 3)
@@ -57,9 +60,11 @@ def find_book_region(tmpl_gray, bg_val):
         'face_val': face_val,
     }
 
-def process_image_v3(tmpl_pil, cover_pil):
-    # Logica di conversione e compositing V3 Final
+def composite_v3(tmpl_pil, cover_pil):
+    # Carica template e converti in array
     tmpl = np.array(tmpl_pil).astype(np.float64)
+    
+    # Gestisci grayscale/RGB come nel tuo script
     if tmpl.ndim == 3:
         tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2])
     else:
@@ -68,9 +73,11 @@ def process_image_v3(tmpl_pil, cover_pil):
     h, w = tmpl_gray.shape
     cover = np.array(cover_pil.convert('RGB')).astype(np.float64)
     
+    # Sfondo
     corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
     bg_val = float(np.median(corners))
     
+    # Trova regione libro
     region = find_book_region(tmpl_gray, bg_val)
     if region is None: return None
     
@@ -81,24 +88,26 @@ def process_image_v3(tmpl_pil, cover_pil):
     face_w, face_h = region['face_w'], region['face_h']
     face_val = region['face_val']
     
-    # Resize cover come da V3
+    # Ridimensiona copertina all'area faccia (Image.LANCZOS)
     cover_resized = np.array(
         Image.fromarray(cover.astype(np.uint8)).resize((face_w, face_h), Image.LANCZOS)
     ).astype(np.float64)
     
-    # Spine color
+    # Colore spine
     spine_strip_w = max(1, face_w // 20)
     spine_color = np.median(cover_resized[:, :spine_strip_w].reshape(-1, 3), axis=0)
     
-    # Compositing
+    # Risultato base: template grayscale -> RGB
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
+    # --- FACCIA: cover x (template / face_val) ---
     face_tmpl = tmpl_gray[by1:by2+1, fx1:bx2+1]
     face_ratio = np.minimum(face_tmpl / face_val, 1.05)
     
     for c in range(3):
         result[by1:by2+1, fx1:bx2+1, c] = cover_resized[:, :, c] * face_ratio
         
+    # --- SPINE: spine_color x (template / face_val) ---
     if spine_w > 0:
         spine_tmpl = tmpl_gray[by1:by2+1, bx1:fx1]
         spine_ratio = spine_tmpl / face_val
@@ -107,7 +116,7 @@ def process_image_v3(tmpl_pil, cover_pil):
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-# --- CARICAMENTO TEMPLATE DA GITHUB ---
+# --- CARICAMENTO AUTOMATICO ---
 @st.cache_data
 def load_fixed_templates():
     lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
@@ -123,15 +132,15 @@ def load_fixed_templates():
 
 libreria = load_fixed_templates()
 
-# --- INTERFACCIA STREAMLIT ---
-st.title("📖 PhotoBook Composer PRO - V3 Logic")
+# --- INTERFACCIA ---
+st.title("📖 PhotoBook Mockup Compositor - V3 Final")
 
-# Mostra i template nelle tabs
+# Tabs per le anteprime dei template
 t1, t2, t3 = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
 for i, (tab, name) in enumerate(zip([t1, t2, t3], ["Verticali", "Orizzontali", "Quadrati"])):
     with tab:
         items = libreria[name]
-        if not items: st.info("Nessun template in questa categoria.")
+        if not items: st.info("Nessun template caricato su GitHub.")
         else:
             cols = st.columns(4)
             for idx, (fname, img) in enumerate(items.items()):
@@ -140,36 +149,40 @@ for i, (tab, name) in enumerate(zip([t1, t2, t3], ["Verticali", "Orizzontali", "
 st.divider()
 
 # Area Produzione
-st.subheader("⚡ Produzione Mockup")
-c_radio, c_clear = st.columns([3, 1])
-with c_radio:
-    scelta = st.radio("Seleziona il formato del design che caricherai:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-with c_clear:
-    if st.button("🧹 SVUOTA DESIGN CARICATI"):
+st.subheader("⚡ Produzione")
+col_sel, col_del = st.columns([3, 1])
+
+with col_sel:
+    scelta = st.radio("Seleziona formato grafiche:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+
+with col_del:
+    if st.button("🧹 SVUOTA DESIGN"):
         st.session_state.uploader_key += 1
         st.rerun()
 
-disegni = st.file_uploader(f"Trascina qui le grafiche {scelta}", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
+disegni = st.file_uploader(f"Carica i design {scelta}", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
 
-if st.button("🚀 GENERA TUTTI I MOCKUP"):
+if st.button("🚀 GENERA MOCKUP"):
     if not disegni or not libreria[scelta]:
-        st.error("Dati mancanti! Controlla di aver caricato i design e che i template esistano.")
+        st.error("Carica i design!")
     else:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
             bar = st.progress(0)
-            total = len(disegni) * len(libreria[scelta])
+            target_tmpls = libreria[scelta]
+            total = len(disegni) * len(target_tmpls)
             count = 0
             for d_file in disegni:
                 d_img = Image.open(d_file)
                 d_name = os.path.splitext(d_file.name)[0]
-                for t_name, t_img in libreria[scelta].items():
-                    res = process_image_v3(t_img, d_img)
+                for t_name, t_img in target_tmpls.items():
+                    res = composite_v3(t_img, d_img)
                     if res:
                         buf = io.BytesIO()
+                        # Qualità 95 come richiesto dal tuo script
                         res.save(buf, format='JPEG', quality=95, subsampling=0)
                         zip_file.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
                     count += 1
                     bar.progress(count / total)
         st.success("✅ Elaborazione completata!")
-        st.download_button("📥 SCARICA ZIP RISULTATI", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}_V3.zip")
+        st.download_button("📥 SCARICA ZIP", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}_V3.zip")
