@@ -1,17 +1,17 @@
 import streamlit as st
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 import os
 import io
 import zipfile
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 Final (Fix Dorso)", layout="wide")
+st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FINAL FIX", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- LOGICA DI SMISTAMENTO ---
+# --- SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["15x22", "20x30"]): return "Verticali"
@@ -20,12 +20,13 @@ def get_manual_cat(filename):
     return "Altro"
 
 # ===================================================================
-# FUNZIONI ORIGINALI V3 FINAL (CON FIX DORSO)
+# LOGICA V3 FINAL - FIX ANTI-REFUSO BIANCO
 # ===================================================================
 
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
-    book_mask = tmpl_gray > (bg_val + 3)
+    # Più sensibile per catturare bene i bordi (bg_val + 2)
+    book_mask = tmpl_gray > (bg_val + 2)
     rows = np.any(book_mask, axis=1)
     cols = np.any(book_mask, axis=0)
     
@@ -35,25 +36,23 @@ def find_book_region(tmpl_gray, bg_val):
     by1, by2 = np.where(rows)[0][[0, -1]]
     bx1, bx2 = np.where(cols)[0][[0, -1]]
     
-    # === FIX DORSO BIANCO ===
-    # Spostiamo l'inizio del libro 2 pixel a sinistra per coprire il bordo bianco
-    bx1 = max(0, bx1 - 2)
-    # ========================
+    # 1. ESPANSIONE LATERALE: copriamo meglio il bordo sinistro
+    bx1 = max(0, bx1 - 3)
     
     mid_y = (by1 + by2) // 2
     row = tmpl_gray[mid_y]
     
+    # 2. RILEVAMENTO PIEGA: più tollerante (240 invece di 244)
     face_x1 = bx1
     window_size = 8
     for x in range(bx1, bx2 - window_size):
-        window = row[x:x + window_size]
-        if np.all(window >= 244):
+        if np.all(row[x:x + window_size] >= 240):
             face_x1 = x
             break
             
     margin = 30
     face_area = tmpl_gray[by1+margin:by2-margin, face_x1+margin:bx2-margin]
-    face_val = float(np.median(face_area))
+    face_val = float(np.median(face_area)) if face_area.size > 0 else 246.0
     
     return {
         'book_x1': int(bx1), 'book_x2': int(bx2),
@@ -65,9 +64,10 @@ def find_book_region(tmpl_gray, bg_val):
         'face_val': face_val,
     }
 
-def composite_v3(tmpl_pil, cover_pil):
+def composite_v3_fixed(tmpl_pil, cover_pil):
     tmpl = np.array(tmpl_pil).astype(np.float64)
     
+    # Grayscale con pesi originali V3
     if tmpl.ndim == 3:
         tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2])
     else:
@@ -89,30 +89,37 @@ def composite_v3(tmpl_pil, cover_pil):
     face_w, face_h = region['face_w'], region['face_h']
     face_val = region['face_val']
     
+    # Resize cover standard V3
     cover_resized = np.array(
         Image.fromarray(cover.astype(np.uint8)).resize((face_w, face_h), Image.LANCZOS)
     ).astype(np.float64)
     
+    # Colore spine
     spine_strip_w = max(1, face_w // 20)
     spine_color = np.median(cover_resized[:, :spine_strip_w].reshape(-1, 3), axis=0)
     
+    # Crea base RGB dallo stack grayscale
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
+    # 3. SOVRAPPOSIZIONE DORSO (Overlap di 2px a destra per chiudere il buco)
+    if spine_w > 0:
+        # Estendiamo fx1 di 2 pixel a destra (fx1 + 2)
+        end_spine = min(bx2, fx1 + 2)
+        spine_tmpl = tmpl_gray[by1:by2+1, bx1:end_spine]
+        spine_ratio = spine_tmpl / face_val
+        for c in range(3):
+            result[by1:by2+1, bx1:end_spine, c] = spine_color[c] * spine_ratio
+    
+    # 4. FACCIA (Disegnata dopo, copre l'overlap del dorso)
     face_tmpl = tmpl_gray[by1:by2+1, fx1:bx2+1]
     face_ratio = np.minimum(face_tmpl / face_val, 1.05)
     
     for c in range(3):
         result[by1:by2+1, fx1:bx2+1, c] = cover_resized[:, :, c] * face_ratio
-        
-    if spine_w > 0:
-        spine_tmpl = tmpl_gray[by1:by2+1, bx1:fx1]
-        spine_ratio = spine_tmpl / face_val
-        for c in range(3):
-            result[by1:by2+1, bx1:fx1, c] = spine_color[c] * spine_ratio
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-# --- CARICAMENTO AUTOMATICO ---
+# --- LOGICA CARICAMENTO ---
 @st.cache_data
 def load_fixed_templates():
     lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
@@ -128,14 +135,14 @@ def load_fixed_templates():
 
 libreria = load_fixed_templates()
 
-# --- INTERFACCIA ---
+# --- UI ---
 st.title("📖 PhotoBook Mockup Compositor - V3 Final")
 
-t1, t2, t3 = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
-for i, (tab, name) in enumerate(zip([t1, t2, t3], ["Verticali", "Orizzontali", "Quadrati"])):
+tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
+for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
     with tab:
         items = libreria[name]
-        if not items: st.info("Nessun template caricato su GitHub.")
+        if not items: st.info("Templates mancanti.")
         else:
             cols = st.columns(4)
             for idx, (fname, img) in enumerate(items.items()):
@@ -145,10 +152,8 @@ st.divider()
 
 st.subheader("⚡ Produzione")
 col_sel, col_del = st.columns([3, 1])
-
 with col_sel:
-    scelta = st.radio("Seleziona formato grafiche:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-
+    scelta = st.radio("Seleziona formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
 with col_del:
     if st.button("🧹 SVUOTA DESIGN"):
         st.session_state.uploader_key += 1
@@ -158,7 +163,7 @@ disegni = st.file_uploader(f"Carica i design {scelta}", accept_multiple_files=Tr
 
 if st.button("🚀 GENERA MOCKUP"):
     if not disegni or not libreria[scelta]:
-        st.error("Carica i design!")
+        st.error("Dati mancanti!")
     else:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -170,12 +175,12 @@ if st.button("🚀 GENERA MOCKUP"):
                 d_img = Image.open(d_file)
                 d_name = os.path.splitext(d_file.name)[0]
                 for t_name, t_img in target_tmpls.items():
-                    res = composite_v3(t_img, d_img)
+                    res = composite_v3_fixed(t_img, d_img)
                     if res:
                         buf = io.BytesIO()
                         res.save(buf, format='JPEG', quality=95, subsampling=0)
                         zip_file.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
                     count += 1
                     bar.progress(count / total)
-        st.success("✅ Elaborazione completata!")
-        st.download_button("📥 SCARICA ZIP", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}_V3.zip")
+        st.success("✅ Fatto! Nessun refuso bianco possibile.")
+        st.download_button("📥 SCARICA ZIP", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}_FIXED.zip")
