@@ -8,12 +8,12 @@ import zipfile
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="PhotoBook Mockup PRO", layout="wide")
 
-# Inizializzazione Memoria
+# Inizializzazione Memoria (Session State)
 if 'database_templates' not in st.session_state:
     st.session_state['database_templates'] = {"Verticali": [], "Orizzontali": [], "Quadrati": []}
 
 def get_exact_orientation(pil_img):
-    """Rileva l'orientamento con tolleranza ridotta per evitare errori tra Verticali e Quadrati."""
+    """Rileva l'orientamento con tolleranza ridotta."""
     w, h = pil_img.size
     ratio = w / h
     if ratio < 0.94: return "Verticali"
@@ -21,6 +21,7 @@ def get_exact_orientation(pil_img):
     return "Quadrati"
 
 def find_book_region(tmpl_gray, bg_val):
+    """Individua l'area della copertina nel template."""
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 5)
     rows = np.any(book_mask, axis=1); cols = np.any(book_mask, axis=0)
@@ -40,6 +41,7 @@ def find_book_region(tmpl_gray, bg_val):
             'w': int(bx2 - face_x1 + 1), 'h': int(by2 - by1 + 1), 'val': face_val}
 
 def process_image(tmpl_pil, cover_pil):
+    """Applica il design al template preservando luci e ombre."""
     tmpl_orig = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
     h, w = tmpl_gray.shape
@@ -61,62 +63,58 @@ def process_image(tmpl_pil, cover_pil):
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("📂 Caricamento Template")
-    target_cat = st.selectbox("Dove vuoi aggiungere i file?", ["Verticali", "Orizzontali", "Quadrati"])
-    uploaded_files = st.file_uploader("Trascina qui i template bianchi", accept_multiple_files=True)
+    st.header("📂 Gestione Template")
+    target_cat = st.selectbox("Categoria di destinazione:", ["Verticali", "Orizzontali", "Quadrati"])
+    uploaded_files = st.file_uploader("Trascina i template bianchi", accept_multiple_files=True)
     
-    if st.button("💾 Memorizza nella categoria giusta"):
+    if st.button("💾 CARICA NELLA LIBRERIA"):
         if uploaded_files:
-            added = 0
             for f in uploaded_files:
                 img = Image.open(f).convert('RGB')
                 detected = get_exact_orientation(img)
-                
-                # FILTRO RIGIDO: Se sto caricando in 'Verticali', scarto i Quadrati rilevati
+                # Filtro di sicurezza per evitare di mischiare i formati
                 if detected == target_cat:
                     st.session_state['database_templates'][target_cat].append({'name': f.name, 'img': img})
-                    added += 1
                 else:
-                    st.warning(f"File saltato: {f.name} sembra un formato {detected}")
-            
-            if added > 0: st.success(f"Aggiunti {added} template a {target_cat}!")
-            st.rerun()
+                    st.sidebar.warning(f"File {f.name} ignorato (è un {detected})")
+            st.rerun() # Forza l'aggiornamento immediato delle anteprime
 
     st.divider()
-    if st.button("🗑️ Svuota Tutto"):
+    if st.button("🗑️ SVUOTA TUTTO"):
         st.session_state['database_templates'] = {"Verticali": [], "Orizzontali": [], "Quadrati": []}
         st.rerun()
 
 # --- MAIN PAGE ---
 st.title("📖 PhotoBook Composer PRO")
 
-# Visualizzazione tabellare delle anteprime
-st.subheader("🖼️ Libreria Template Attivi")
+# Visualizzazione Galleria Anteprime
+st.subheader("🖼️ Template caricati (Anteprima visiva)")
 tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
 
 for i, cat_name in enumerate(["Verticali", "Orizzontali", "Quadrati"]):
     with tabs[i]:
         tmpls = st.session_state['database_templates'][cat_name]
         if not tmpls:
-            st.write("Vuoto. Carica file dalla sidebar.")
+            st.info(f"Nessun template {cat_name} in memoria.")
         else:
-            cols = st.columns(5)
+            # Layout a griglia per le anteprime
+            grid_cols = st.columns(4)
             for idx, t in enumerate(tmpls):
-                with cols[idx % 5]:
+                with grid_cols[idx % 4]:
                     st.image(t['img'], caption=t['name'], use_container_width=True)
 
 st.divider()
 
-# Produzione
-st.subheader("⚡ Produzione")
-prod_cat = st.radio("Seleziona il formato dei design che stai per caricare:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+# Area di Produzione
+st.subheader("⚡ Produzione Mockup")
+prod_cat = st.radio("Scegli il formato dei design che caricherai:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
 
-designs = st.file_uploader(f"Carica i design {prod_cat}", accept_multiple_files=True)
+designs = st.file_uploader(f"Trascina qui le grafiche {prod_cat}", accept_multiple_files=True)
 
-if st.button("🚀 GENERA E SCARICA"):
+if st.button("🚀 GENERA TUTTO"):
     active_tmpls = st.session_state['database_templates'][prod_cat]
     if not active_tmpls or not designs:
-        st.error("Assicurati di avere template in memoria e di aver caricato i design.")
+        st.error("Errore: Assicurati di aver caricato i template nella libreria e i design nel box sopra.")
     else:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -135,4 +133,5 @@ if st.button("🚀 GENERA E SCARICA"):
                     count += 1
                     progress.progress(count / total)
         
+        st.success(f"✅ Creati {count} mockup! Clicca sotto per scaricare.")
         st.download_button("📥 SCARICA ZIP", data=zip_buffer.getvalue(), file_name=f"Mockup_{prod_cat}.zip")
