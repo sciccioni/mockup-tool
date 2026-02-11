@@ -173,8 +173,18 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
         else:
             cols = st.columns(4)
             for idx, (fname, img) in enumerate(items.items()):
-                # Uso use_column_width per dimensioni uniformi gestite da Streamlit
-                cols[idx % 4].image(img, caption=fname, use_column_width=True)
+                # Creo thumbnail con altezza massima di 250px
+                max_height = 250
+                aspect = img.width / img.height
+                
+                if img.height > max_height:
+                    new_height = max_height
+                    new_width = int(new_height * aspect)
+                    thumb = img.resize((new_width, new_height), Image.LANCZOS)
+                else:
+                    thumb = img
+                
+                cols[idx % 4].image(thumb, caption=fname, use_column_width=True)
 
 st.divider()
 
