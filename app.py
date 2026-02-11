@@ -84,43 +84,50 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     by1, by2 = region['book_y1'], region['book_y2']
     face_val = region['face_val']
 
-    # --- FIX LINEE BIANCHE CON COLORE BORDO COVER ---
+    # --- FIX LINEE BIANCHE: OVER-BLEEDING + SFONDO COLORATO ---
     target_w = bx2 - bx1 + 1
     target_h = by2 - by1 + 1
     
-    # Prendo il colore medio del bordo sinistro e inferiore della cover
+    # Prendo il colore medio dei bordi della cover
     border_pixels = []
-    # Bordo sinistro (primi 3 pixel)
-    border_pixels.append(cover[:, :3].reshape(-1, 3))
-    # Bordo inferiore (ultimi 3 pixel)
-    border_pixels.append(cover[-3:, :].reshape(-1, 3))
+    border_pixels.append(cover[:, :5].reshape(-1, 3))  # Bordo sinistro
+    border_pixels.append(cover[-5:, :].reshape(-1, 3))  # Bordo inferiore
+    border_pixels.append(cover[:5, :].reshape(-1, 3))   # Bordo superiore
+    border_pixels.append(cover[:, -5:].reshape(-1, 3))  # Bordo destro
     border_color = np.median(np.vstack(border_pixels), axis=0)
     
-    # Over-bleeding con sfondo del colore della cover
-    bleed = 3
+    bleed = 4
     
-    # Creo un'immagine con sfondo del colore del bordo della cover
-    cover_with_border = np.ones((target_h + bleed*2, target_w + bleed*2, 3), dtype=np.float64)
-    for c in range(3):
-        cover_with_border[:, :, c] *= border_color[c]
-    
-    # Resize della cover
-    cover_resized = np.array(
-        Image.fromarray(cover.astype(np.uint8)).resize((target_w, target_h), Image.LANCZOS)
+    # Resize PIÙ GRANDE (con over-bleeding)
+    cover_big = np.array(
+        Image.fromarray(cover.astype(np.uint8)).resize(
+            (target_w + bleed*2, target_h + bleed*2), Image.LANCZOS
+        )
     ).astype(np.float64)
     
-    # Incollo la cover al centro dello sfondo colorato
-    cover_with_border[bleed:bleed+target_h, bleed:bleed+target_w] = cover_resized
+    # Croppo al centro per ottenere la dimensione esatta
+    cover_final = cover_big[bleed:bleed+target_h, bleed:bleed+target_w]
     
-    # Crop dal centro
-    cover_final = cover_with_border[bleed:bleed+target_h, bleed:bleed+target_w]
+    # Se ci sono ancora pixel bianchi ai bordi, li sostituisco col colore del bordo
+    # Controllo i bordi per pixel troppo chiari (quasi bianchi)
+    threshold = 240
+    
+    # Bordo sinistro
+    for x in range(min(3, target_w)):
+        for y in range(target_h):
+            if np.all(cover_final[y, x] > threshold):
+                cover_final[y, x] = border_color
+    
+    # Bordo inferiore
+    for y in range(max(0, target_h-3), target_h):
+        for x in range(target_w):
+            if np.all(cover_final[y, x] > threshold):
+                cover_final[y, x] = border_color
     
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
     # Maschera di luminosità dal template
     book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
-    
-    # Clip a 1.0 per evitare che le zone chiare del template sbianchino i bordi
     book_ratio = np.minimum(book_tmpl / face_val, 1.0)
     
     for c in range(3):
