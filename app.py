@@ -14,7 +14,7 @@ if 'uploader_key' not in st.session_state:
 # --- SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
-    # Template base
+    # Template base (con o senza prefisso numerico)
     if "base_copertina_verticale" in fn: return "Verticali"
     if "base_copertina_orizzontale" in fn: return "Orizzontali"
     # Template specifici per dimensione
@@ -124,19 +124,40 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
 def load_fixed_templates():
     lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
     base_path = "templates"
-    if os.path.exists(base_path):
-        for f_name in os.listdir(base_path):
-            if f_name.lower().endswith(('jpg', 'jpeg', 'png')):
-                cat = get_manual_cat(f_name)
-                if cat in lib:
+    
+    if not os.path.exists(base_path):
+        st.warning(f"⚠️ Cartella '{base_path}' non trovata!")
+        return lib
+    
+    files_found = []
+    for f_name in os.listdir(base_path):
+        if f_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+            files_found.append(f_name)
+            cat = get_manual_cat(f_name)
+            if cat in lib:
+                try:
                     img = Image.open(os.path.join(base_path, f_name)).convert('RGB')
                     lib[cat][f_name] = img
+                except Exception as e:
+                    st.error(f"Errore caricamento {f_name}: {e}")
+    
+    # Debug info
+    if files_found:
+        st.info(f"📁 Template trovati: {len(files_found)} - {', '.join(files_found)}")
+    else:
+        st.warning("⚠️ Nessun template trovato nella cartella templates/")
+    
     return lib
 
 libreria = load_fixed_templates()
 
 # --- INTERFACCIA ---
 st.title("📖 PhotoBook Mockup Compositor - V3 Fixed (No White Lines)")
+
+# Pulsante per ricaricare i template
+if st.button("🔄 RICARICA TEMPLATES"):
+    st.cache_data.clear()
+    st.rerun()
 
 tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
 for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
