@@ -89,38 +89,68 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     
     # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
     if "base_copertina" in template_name.lower():
-        # Template base: copro TUTTA l'area senza cercare dorso/face
-        # OVER-BLEEDING MASSIMO per eliminare TUTTE le linee bianche
-        bleed = 10
+        # Template base: IGNORO la rilevazione automatica e copro TUTTO
+        # Trovo MANUALMENTE i bordi REALI del libro senza fidarmi dell'algoritmo
         
-        # Estendo anche l'area oltre i bordi rilevati
-        extend = 5
-        ext_bx1 = max(0, bx1 - extend)
-        ext_bx2 = min(w - 1, bx2 + extend)
-        ext_by1 = max(0, by1 - extend)
-        ext_by2 = min(h - 1, by2 + extend)
+        # Cerco il bordo sinistro (primo pixel non-bianco)
+        real_bx1 = 0
+        for x in range(w):
+            col = tmpl_gray[:, x]
+            if np.any(col < 250):  # Trovato pixel non-bianco
+                real_bx1 = x
+                break
         
-        ext_w = ext_bx2 - ext_bx1 + 1
-        ext_h = ext_by2 - ext_by1 + 1
+        # Cerco il bordo destro (ultimo pixel non-bianco) 
+        real_bx2 = w - 1
+        for x in range(w-1, -1, -1):
+            col = tmpl_gray[:, x]
+            if np.any(col < 250):
+                real_bx2 = x
+                break
         
-        # Resize con over-bleeding ENORME
+        # Cerco il bordo superiore
+        real_by1 = 0
+        for y in range(h):
+            row = tmpl_gray[y, :]
+            if np.any(row < 250):
+                real_by1 = y
+                break
+        
+        # Cerco il bordo inferiore - QUI STA IL PROBLEMA!
+        real_by2 = h - 1
+        for y in range(h-1, -1, -1):
+            row = tmpl_gray[y, :]
+            if np.any(row < 250):
+                real_by2 = y
+                break
+        
+        # Estendo di 2px per sicurezza
+        real_bx1 = max(0, real_bx1 - 2)
+        real_bx2 = min(w - 1, real_bx2 + 2)
+        real_by1 = max(0, real_by1 - 2)
+        real_by2 = min(h - 1, real_by2 + 2)
+        
+        real_w = real_bx2 - real_bx1 + 1
+        real_h = real_by2 - real_by1 + 1
+        
+        # Over-bleeding ENORME
+        bleed = 15
+        
         cover_big = np.array(
             Image.fromarray(cover.astype(np.uint8)).resize(
-                (ext_w + bleed*2, ext_h + bleed*2), Image.LANCZOS
+                (real_w + bleed*2, real_h + bleed*2), Image.LANCZOS
             )
         ).astype(np.float64)
         
-        # Crop dal centro
-        cover_final = cover_big[bleed:bleed+ext_h, bleed:bleed+ext_w]
+        cover_final = cover_big[bleed:bleed+real_h, bleed:bleed+real_w]
         
         result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
         
-        # Applico la cover su TUTTA l'area ESTESA del libro
-        book_tmpl = tmpl_gray[ext_by1:ext_by2+1, ext_bx1:ext_bx2+1]
+        book_tmpl = tmpl_gray[real_by1:real_by2+1, real_bx1:real_bx2+1]
         book_ratio = np.minimum(book_tmpl / face_val, 1.0)
         
         for c in range(3):
-            result[ext_by1:ext_by2+1, ext_bx1:ext_bx2+1, c] = cover_final[:, :, c] * book_ratio
+            result[real_by1:real_by2+1, real_bx1:real_bx2+1, c] = cover_final[:, :, c] * book_ratio
             
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
     
