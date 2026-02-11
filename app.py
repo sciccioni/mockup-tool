@@ -163,7 +163,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     border_pixels.append(cover[:, -5:].reshape(-1, 3))
     border_color = np.median(np.vstack(border_pixels), axis=0)
     
-    bleed = 4
+    bleed = 12  # Aumentato a 12!
     
     cover_big = np.array(
         Image.fromarray(cover.astype(np.uint8)).resize(
@@ -173,17 +173,42 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     
     cover_final = cover_big[bleed:bleed+target_h, bleed:bleed+target_w]
     
-    # Sostituisco pixel bianchi ai bordi
-    threshold = 240
+    # Sostituisco pixel chiari ai bordi - MOLTO PIÙ AGGRESSIVO
+    # Abbasso threshold da 240 a 230 per catturare più pixel chiari
+    threshold = 230
+    border_check = 6  # Controllo 6px invece di 5
     
-    for x in range(min(3, target_w)):
+    # Bordo sinistro
+    for x in range(min(border_check, target_w)):
         for y in range(target_h):
-            if np.all(cover_final[y, x] > threshold):
+            # Se il pixel è più chiaro della media del colore di bordo, sostituiscilo
+            pixel_brightness = np.mean(cover_final[y, x])
+            border_brightness = np.mean(border_color)
+            if pixel_brightness > border_brightness + 10:  # Pixel molto più chiaro
                 cover_final[y, x] = border_color
     
-    for y in range(max(0, target_h-3), target_h):
+    # Bordo inferiore
+    for y in range(max(0, target_h-border_check), target_h):
         for x in range(target_w):
-            if np.all(cover_final[y, x] > threshold):
+            pixel_brightness = np.mean(cover_final[y, x])
+            border_brightness = np.mean(border_color)
+            if pixel_brightness > border_brightness + 10:
+                cover_final[y, x] = border_color
+    
+    # Bordo superiore
+    for y in range(min(border_check, target_h)):
+        for x in range(target_w):
+            pixel_brightness = np.mean(cover_final[y, x])
+            border_brightness = np.mean(border_color)
+            if pixel_brightness > border_brightness + 10:
+                cover_final[y, x] = border_color
+    
+    # Bordo destro
+    for x in range(max(0, target_w-border_check), target_w):
+        for y in range(target_h):
+            pixel_brightness = np.mean(cover_final[y, x])
+            border_brightness = np.mean(border_color)
+            if pixel_brightness > border_brightness + 10:
                 cover_final[y, x] = border_color
     
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
