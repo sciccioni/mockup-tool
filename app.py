@@ -38,10 +38,14 @@ def find_book_region(tmpl_gray, bg_val):
     mid_y = (by1 + by2) // 2
     row = tmpl_gray[mid_y]
     
+    # Cerchiamo il punto dove inizia la zona bianca (potenziale face)
+    # Ma saremo più conservativi per evitare gap
     face_x1 = bx1
-    window_size = 8
+    window_size = 5  # Ridotto da 8 a 5 per essere più sensibili
+    threshold = 240  # Ridotto da 244 per catturare meglio il confine
+    
     for x in range(bx1, bx2 - window_size):
-        if np.all(row[x:x + window_size] >= 244):
+        if np.all(row[x:x + window_size] >= threshold):
             face_x1 = x
             break
             
@@ -84,35 +88,30 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     face_w, face_h = region['face_w'], region['face_h']
     face_val = region['face_val']
 
-    # --- FIX RIGA BIANCA: Overlap di 3 pixel ---
-    # Resiziamo la cover per essere 3 pixel più larga a sinistra
-    overlap_pixels = 3
-    draw_fx1 = max(bx1, fx1 - overlap_pixels)
-    draw_face_w = bx2 - draw_fx1 + 1
+    # --- NUOVO APPROCCIO: COPERTURA COMPLETA ---
+    # Invece di separare dorso e face, copriamo tutto con la cover
+    # e usiamo il template per modulare l'illuminazione
     
+    # Usiamo l'intera larghezza del libro
+    full_book_w = bx2 - bx1 + 1
+    
+    # Resize della cover per coprire l'intero libro
     cover_resized = np.array(
-        Image.fromarray(cover.astype(np.uint8)).resize((draw_face_w, face_h), Image.LANCZOS)
+        Image.fromarray(cover.astype(np.uint8)).resize((full_book_w, face_h), Image.LANCZOS)
     ).astype(np.float64)
     
-    # Spine color (dalla striscia originale della cover)
-    spine_strip_w = max(1, face_w // 20)
+    # Estraiamo il colore del dorso dal bordo sinistro della cover
+    spine_strip_w = max(1, full_book_w // 20)
     spine_color = np.median(cover_resized[:, :spine_strip_w].reshape(-1, 3), axis=0)
     
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
-    # 1. SPINE (Originale)
-    if spine_w > 0:
-        spine_tmpl = tmpl_gray[by1:by2+1, bx1:fx1]
-        spine_ratio = spine_tmpl / face_val
-        for c in range(3):
-            result[by1:by2+1, bx1:fx1, c] = spine_color[c] * spine_ratio
-    
-    # 2. FACE (Con sovrapposizione di 3px per eliminare completamente la banda bianca)
-    face_tmpl = tmpl_gray[by1:by2+1, draw_fx1:bx2+1]
-    face_ratio = np.minimum(face_tmpl / face_val, 1.05)
+    # Applichiamo la cover su tutto il libro usando il template come maschera di luce
+    book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
+    book_ratio = np.minimum(book_tmpl / face_val, 1.05)
     
     for c in range(3):
-        result[by1:by2+1, draw_fx1:bx2+1, c] = cover_resized[:, :, c] * face_ratio
+        result[by1:by2+1, bx1:bx2+1, c] = cover_resized[:, :, c] * book_ratio
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
