@@ -89,30 +89,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     target_h = by2 - by1 + 1
     
     # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
-    if "base_bottom_app" in template_name.lower():
-        # base_bottom_app ha una struttura speciale - copro SOLO l'area visibile senza bande
-        # Uso dimensioni FISSE per questo template
-        bleed = 15
-        
-        # Per base_bottom_app copro l'INTERA immagine del template
-        # senza cercare di rilevare bordi
-        cover_big = np.array(
-            Image.fromarray(cover.astype(np.uint8)).resize(
-                (w + bleed*2, h + bleed*2), Image.LANCZOS
-            )
-        ).astype(np.float64)
-        
-        cover_final = cover_big[bleed:bleed+h, bleed:bleed+w]
-        
-        result = cover_final.copy()
-        
-        # Applico il template come maschera di luminosità su TUTTO
-        for c in range(3):
-            result[:, :, c] = cover_final[:, :, c] * np.minimum(tmpl_gray / face_val, 1.0)
-            
-        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
-    
-    if "base_copertina" in template_name.lower():
+    if "base_copertina" in template_name.lower() or "base_bottom_app" in template_name.lower():
         # Template base: IGNORO la rilevazione automatica e copro TUTTO
         # Trovo MANUALMENTE i bordi REALI del libro senza fidarmi dell'algoritmo
         
