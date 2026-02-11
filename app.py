@@ -16,14 +16,7 @@ if 'libreria' not in st.session_state:
 if 'design_uploader_key' not in st.session_state:
     st.session_state['design_uploader_key'] = 0
 
-def get_exact_orientation(pil_img):
-    w, h = pil_img.size
-    ratio = w / h
-    if ratio < 0.94: return "Verticali"
-    if ratio > 1.06: return "Orizzontali"
-    return "Quadrati"
-
-# --- 2. LOGICA DI ELABORAZIONE (NON TOCCATA) ---
+# --- 2. LOGICA DI ELABORAZIONE CON MARGINE (AGGIORNATA) ---
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 5)
@@ -50,16 +43,47 @@ def process_image(tmpl_pil, cover_pil):
     bg_val = float(np.median([tmpl_gray[5,5], tmpl_gray[5,w-5], tmpl_gray[h-5,5], tmpl_gray[h-5,w-5]]))
     reg = find_book_region(tmpl_gray, bg_val)
     if not reg: return None
-    cover_res = np.array(ImageOps.fit(cover_rgb, (reg['w'], reg['h']), Image.LANCZOS)).astype(np.float64)
-    spine_color = np.median(cover_res[:, :max(1, reg['w']//40)].reshape(-1, 3), axis=0)
+
+    # --- NUOVA LOGICA: AGGIUNTA MARGINE BIANCO ---
+    # Percentuale di margine (es. 0.05 = 5% per lato)
+    padding_pct = 0.05 
+    full_w, full_h = reg['w'], reg['h']
+    
+    # Calcola dimensioni ridotte per il design
+    pad_w = int(full_w * (1 - padding_pct * 2))
+    pad_h = int(full_h * (1 - padding_pct * 2))
+    
+    # 1. Crea sfondo bianco (colore carta)
+    page_bg = Image.new('RGB', (full_w, full_h), color=(245, 245, 245))
+    
+    # 2. Ridimensiona il design per stare nell'area ridotta (senza stretch)
+    cover_resized = ImageOps.fit(cover_rgb, (pad_w, pad_h), Image.LANCZOS)
+    
+    # 3. Incolla il design centrato sullo sfondo bianco
+    paste_x = (full_w - pad_w) // 2
+    paste_y = (full_h - pad_h) // 2
+    page_bg.paste(cover_resized, (paste_x, paste_y))
+    
+    # Converti il risultato (design + bordo bianco) in array per l'elaborazione
+    cover_res = np.array(page_bg).astype(np.float64)
+
+    # Calcola il colore dello spine prendendolo dal design ridimensionato (non dal bordo bianco)
+    spine_source_strip = np.array(cover_resized)[:, :max(1, pad_w//40)].reshape(-1, 3)
+    spine_color = np.median(spine_source_strip, axis=0)
+    # --- FINE NUOVA LOGICA ---
+
     result = tmpl_orig.copy()
     face_area_tmpl = tmpl_gray[reg['y1']:reg['y2']+1, reg['fx1']:reg['x2']+1]
     face_ratio = np.expand_dims(np.minimum(face_area_tmpl / reg['val'], 1.05), axis=2)
     spine_area_tmpl = tmpl_gray[reg['y1']:reg['y2']+1, reg['x1']:reg['fx1']]
     spine_ratio = np.expand_dims(spine_area_tmpl / reg['val'], axis=2)
+    
+    # Applica la composizione (design + bordo) sulla faccia del libro
     result[reg['y1']:reg['y2']+1, reg['fx1']:reg['x2']+1, :] = cover_res * face_ratio
+    
     if reg['fx1'] > reg['x1']:
         result[reg['y1']:reg['y2']+1, reg['x1']:reg['fx1'], :] = spine_color * spine_ratio
+    
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
 # --- 3. SIDEBAR ---
@@ -101,7 +125,7 @@ for i, cat_name in enumerate(["Verticali", "Orizzontali", "Quadrati"]):
 
 st.divider()
 
-# --- SEZIONE PRODUZIONE (AGGIORNATA) ---
+# --- SEZIONE PRODUZIONE ---
 st.subheader("⚡ Produzione Mockup")
 c1, c2 = st.columns([2, 1])
 
@@ -109,12 +133,10 @@ with c1:
     prod_cat = st.radio("Seleziona formato grafiche:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
 
 with c2:
-    # Bottone per cancellare solo i design caricati
     if st.button("🧹 CANCELLA TUTTE LE GRAFICHE"):
         st.session_state['design_uploader_key'] += 1
         st.rerun()
 
-# Upload con feedback migliorato
 designs = st.file_uploader(
     f"Trascina qui le grafiche {prod_cat}", 
     accept_multiple_files=True, 
@@ -122,12 +144,10 @@ designs = st.file_uploader(
 )
 
 if designs:
-    st.success(f"📦 {len(designs)} immagini caricate correttamente. Pronte per essere elaborate su {len(st.session_state['libreria'][prod_cat])} template.")
-    
-    # Anteprima veloce delle prime 5 immagini per feedback visivo
+    st.success(f"📦 {len(designs)} immagini caricate. Verranno applicate con un bordo bianco di sicurezza.")
     with st.expander("👁️ Clicca per vedere anteprima grafiche caricate"):
         p_cols = st.columns(5)
-        for i, d in enumerate(designs[:10]): # Mostra max 10 anteprime
+        for i, d in enumerate(designs[:10]):
             p_cols[i % 5].image(Image.open(d), use_container_width=True)
 
 if st.button("🚀 AVVIA GENERAZIONE"):
@@ -154,5 +174,5 @@ if st.button("🚀 AVVIA GENERAZIONE"):
                     count += 1
                     progress.progress(count / total)
         
-        st.success(f"✅ Creati {count} mockup!")
+        st.success(f"✅ Creati {count} mockup con bordo!")
         st.download_button("📥 SCARICA ZIP", data=zip_buffer.getvalue(), file_name=f"Mockups_{prod_cat}.zip")
