@@ -63,7 +63,7 @@ def find_book_region(tmpl_gray, bg_val):
         'face_val': face_val,
     }
 
-def composite_v3_fixed(tmpl_pil, cover_pil):
+def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     tmpl = np.array(tmpl_pil).astype(np.float64)
     
     if tmpl.ndim == 3:
@@ -84,41 +84,62 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     by1, by2 = region['book_y1'], region['book_y2']
     face_val = region['face_val']
 
-    # --- FIX LINEE BIANCHE: OVER-BLEEDING + SFONDO COLORATO ---
     target_w = bx2 - bx1 + 1
     target_h = by2 - by1 + 1
     
+    # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
+    if "base_copertina" in template_name.lower():
+        # Template base: copro TUTTA l'area senza cercare dorso/face
+        bleed = 5
+        
+        # Resize con over-bleeding MASSIMO
+        cover_big = np.array(
+            Image.fromarray(cover.astype(np.uint8)).resize(
+                (target_w + bleed*2, target_h + bleed*2), Image.LANCZOS
+            )
+        ).astype(np.float64)
+        
+        # Crop dal centro
+        cover_final = cover_big[bleed:bleed+target_h, bleed:bleed+target_w]
+        
+        result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
+        
+        # Applico la cover su TUTTA l'area del libro
+        book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
+        book_ratio = np.minimum(book_tmpl / face_val, 1.0)
+        
+        for c in range(3):
+            result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
+            
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+    
+    # --- LOGICA NORMALE PER ALTRI TEMPLATE ---
     # Prendo il colore medio dei bordi della cover
     border_pixels = []
-    border_pixels.append(cover[:, :5].reshape(-1, 3))  # Bordo sinistro
-    border_pixels.append(cover[-5:, :].reshape(-1, 3))  # Bordo inferiore
-    border_pixels.append(cover[:5, :].reshape(-1, 3))   # Bordo superiore
-    border_pixels.append(cover[:, -5:].reshape(-1, 3))  # Bordo destro
+    border_pixels.append(cover[:, :5].reshape(-1, 3))
+    border_pixels.append(cover[-5:, :].reshape(-1, 3))
+    border_pixels.append(cover[:5, :].reshape(-1, 3))
+    border_pixels.append(cover[:, -5:].reshape(-1, 3))
     border_color = np.median(np.vstack(border_pixels), axis=0)
     
     bleed = 4
     
-    # Resize PIÙ GRANDE (con over-bleeding)
     cover_big = np.array(
         Image.fromarray(cover.astype(np.uint8)).resize(
             (target_w + bleed*2, target_h + bleed*2), Image.LANCZOS
         )
     ).astype(np.float64)
     
-    # Croppo al centro per ottenere la dimensione esatta
     cover_final = cover_big[bleed:bleed+target_h, bleed:bleed+target_w]
     
-    # Se ci sono ancora pixel bianchi ai bordi, li sostituisco col colore del bordo
-    # Controllo i bordi per pixel troppo chiari (quasi bianchi)
+    # Sostituisco pixel bianchi ai bordi
     threshold = 240
     
-    # Bordo sinistro
     for x in range(min(3, target_w)):
         for y in range(target_h):
             if np.all(cover_final[y, x] > threshold):
                 cover_final[y, x] = border_color
     
-    # Bordo inferiore
     for y in range(max(0, target_h-3), target_h):
         for x in range(target_w):
             if np.all(cover_final[y, x] > threshold):
@@ -126,7 +147,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
-    # Maschera di luminosità dal template
     book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
     book_ratio = np.minimum(book_tmpl / face_val, 1.0)
     
@@ -227,7 +247,7 @@ if st.button("🚀 GENERA TUTTI"):
                 d_img = Image.open(d_file)
                 d_name = os.path.splitext(d_file.name)[0]
                 for t_name, t_img in target_tmpls.items():
-                    res = composite_v3_fixed(t_img, d_img)
+                    res = composite_v3_fixed(t_img, d_img, t_name)
                     if res:
                         buf = io.BytesIO()
                         res.save(buf, format='JPEG', quality=95, subsampling=0)
