@@ -70,7 +70,6 @@ def find_book_region(tmpl_gray, bg_val):
 def composite_v3_fixed(tmpl_pil, cover_pil):
     tmpl = np.array(tmpl_pil).astype(np.float64)
     
-    # Luminanza V3 originale
     if tmpl.ndim == 3:
         tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2])
     else:
@@ -87,41 +86,31 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     
     bx1, bx2 = region['book_x1'], region['book_x2']
     by1, by2 = region['book_y1'], region['book_y2']
-    fx1 = region['face_x1']
-    spine_w = region['spine_w']
-    face_w, face_h = region['face_w'], region['face_h']
     face_val = region['face_val']
-
-    # --- NUOVO APPROCCIO: COPERTURA COMPLETA ---
-    # Invece di separare dorso e face, copriamo tutto con la cover
-    # e usiamo il template per modulare l'illuminazione
     
-    # Usiamo l'intera larghezza del libro
-    full_book_w = bx2 - bx1 + 1
+    # --- FIX LINEE BIANCHE CON OVER-BLEEDING ---
+    target_w = bx2 - bx1 + 1
+    target_h = by2 - by1 + 1
     
-    # Estendo anche verticalmente di qualche pixel per evitare righe bianche
-    vertical_extend = 2
-    extended_by1 = max(0, by1 - vertical_extend)
-    extended_by2 = min(h - 1, by2 + vertical_extend)
-    extended_face_h = extended_by2 - extended_by1 + 1
-    
-    # Resize della cover per coprire l'intero libro (esteso)
+    # Over-bleeding: scaliamo leggermente più grande (2px) e poi croppiamo al centro
+    # Questo assicura che i pixel ai bordi siano pieni e non interpolati con il bianco
+    bleed = 2
     cover_resized = np.array(
-        Image.fromarray(cover.astype(np.uint8)).resize((full_book_w, extended_face_h), Image.LANCZOS)
+        Image.fromarray(cover.astype(np.uint8)).resize((target_w + (bleed*2), target_h + (bleed*2)), Image.LANCZOS)
     ).astype(np.float64)
     
-    # Estraiamo il colore del dorso dal bordo sinistro della cover
-    spine_strip_w = max(1, full_book_w // 20)
-    spine_color = np.median(cover_resized[:, :spine_strip_w].reshape(-1, 3), axis=0)
+    cover_final = cover_resized[bleed:bleed+target_h, bleed:bleed+target_w]
     
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
-    # Applichiamo la cover su tutto il libro usando il template come maschera di luce
-    book_tmpl = tmpl_gray[extended_by1:extended_by2+1, bx1:bx2+1]
-    book_ratio = np.minimum(book_tmpl / face_val, 1.05)
+    # Maschera di luminosità dal template
+    book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
+    
+    # Clip a 1.0 per evitare che le zone chiare del template sbianchino i bordi
+    book_ratio = np.minimum(book_tmpl / face_val, 1.0)
     
     for c in range(3):
-        result[extended_by1:extended_by2+1, bx1:bx2+1, c] = cover_resized[:, :, c] * book_ratio
+        result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
