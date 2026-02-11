@@ -155,7 +155,27 @@ def load_fixed_templates():
     
     return lib
 
-libreria = load_fixed_templates()
+@st.cache_data
+def get_template_thumbnails():
+    """Crea thumbnail uniformi per le anteprime"""
+    lib = load_fixed_templates()
+    thumbs = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
+    
+    max_height = 250
+    for cat in lib:
+        for fname, img in lib[cat].items():
+            aspect = img.width / img.height
+            if img.height > max_height:
+                new_height = max_height
+                new_width = int(new_height * aspect)
+                thumb = img.resize((new_width, new_height), Image.LANCZOS)
+            else:
+                thumb = img
+            thumbs[cat][fname] = thumb
+    
+    return lib, thumbs
+
+libreria, thumbnails = get_template_thumbnails()
 
 # --- INTERFACCIA ---
 st.title("📖 PhotoBook Mockup Compositor - V3 Fixed (No White Lines)")
@@ -168,22 +188,11 @@ if st.button("🔄 RICARICA TEMPLATES"):
 tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
 for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
     with tab:
-        items = libreria[name]
+        items = thumbnails[name]
         if not items: st.info("Templates non trovati.")
         else:
             cols = st.columns(4)
-            for idx, (fname, img) in enumerate(items.items()):
-                # Creo thumbnail con altezza massima di 250px
-                max_height = 250
-                aspect = img.width / img.height
-                
-                if img.height > max_height:
-                    new_height = max_height
-                    new_width = int(new_height * aspect)
-                    thumb = img.resize((new_width, new_height), Image.LANCZOS)
-                else:
-                    thumb = img
-                
+            for idx, (fname, thumb) in enumerate(items.items()):
                 cols[idx % 4].image(thumb, caption=fname, use_column_width=True)
 
 st.divider()
