@@ -84,18 +84,36 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     by1, by2 = region['book_y1'], region['book_y2']
     face_val = region['face_val']
 
-    # --- FIX LINEE BIANCHE ---
+    # --- FIX LINEE BIANCHE CON COLORE BORDO COVER ---
     target_w = bx2 - bx1 + 1
     target_h = by2 - by1 + 1
     
-    # Over-bleeding: scaliamo leggermente più grande (2px) e poi croppiamo al centro
-    # Questo assicura che i pixel ai bordi siano pieni e non interpolati con il bianco
-    bleed = 2
+    # Prendo il colore medio del bordo sinistro e inferiore della cover
+    border_pixels = []
+    # Bordo sinistro (primi 3 pixel)
+    border_pixels.append(cover[:, :3].reshape(-1, 3))
+    # Bordo inferiore (ultimi 3 pixel)
+    border_pixels.append(cover[-3:, :].reshape(-1, 3))
+    border_color = np.median(np.vstack(border_pixels), axis=0)
+    
+    # Over-bleeding con sfondo del colore della cover
+    bleed = 3
+    
+    # Creo un'immagine con sfondo del colore del bordo della cover
+    cover_with_border = np.ones((target_h + bleed*2, target_w + bleed*2, 3), dtype=np.float64)
+    for c in range(3):
+        cover_with_border[:, :, c] *= border_color[c]
+    
+    # Resize della cover
     cover_resized = np.array(
-        Image.fromarray(cover.astype(np.uint8)).resize((target_w + (bleed*2), target_h + (bleed*2)), Image.LANCZOS)
+        Image.fromarray(cover.astype(np.uint8)).resize((target_w, target_h), Image.LANCZOS)
     ).astype(np.float64)
     
-    cover_final = cover_resized[bleed:bleed+target_h, bleed:bleed+target_w]
+    # Incollo la cover al centro dello sfondo colorato
+    cover_with_border[bleed:bleed+target_h, bleed:bleed+target_w] = cover_resized
+    
+    # Crop dal centro
+    cover_final = cover_with_border[bleed:bleed+target_h, bleed:bleed+target_w]
     
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
