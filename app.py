@@ -99,9 +99,15 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     # Usiamo l'intera larghezza del libro
     full_book_w = bx2 - bx1 + 1
     
-    # Resize della cover per coprire l'intero libro
+    # Estendo anche verticalmente di qualche pixel per evitare righe bianche
+    vertical_extend = 2
+    extended_by1 = max(0, by1 - vertical_extend)
+    extended_by2 = min(h - 1, by2 + vertical_extend)
+    extended_face_h = extended_by2 - extended_by1 + 1
+    
+    # Resize della cover per coprire l'intero libro (esteso)
     cover_resized = np.array(
-        Image.fromarray(cover.astype(np.uint8)).resize((full_book_w, face_h), Image.LANCZOS)
+        Image.fromarray(cover.astype(np.uint8)).resize((full_book_w, extended_face_h), Image.LANCZOS)
     ).astype(np.float64)
     
     # Estraiamo il colore del dorso dal bordo sinistro della cover
@@ -111,11 +117,11 @@ def composite_v3_fixed(tmpl_pil, cover_pil):
     result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
     
     # Applichiamo la cover su tutto il libro usando il template come maschera di luce
-    book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
+    book_tmpl = tmpl_gray[extended_by1:extended_by2+1, bx1:bx2+1]
     book_ratio = np.minimum(book_tmpl / face_val, 1.05)
     
     for c in range(3):
-        result[by1:by2+1, bx1:bx2+1, c] = cover_resized[:, :, c] * book_ratio
+        result[extended_by1:extended_by2+1, bx1:bx2+1, c] = cover_resized[:, :, c] * book_ratio
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
@@ -167,7 +173,14 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
         else:
             cols = st.columns(4)
             for idx, (fname, img) in enumerate(items.items()):
-                cols[idx % 4].image(img, caption=fname, use_container_width=True)
+                # Creo un'anteprima ridimensionata per uniformare la visualizzazione
+                # Altezza fissa 300px mantenendo le proporzioni
+                preview_height = 300
+                aspect_ratio = img.width / img.height
+                preview_width = int(preview_height * aspect_ratio)
+                preview_img = img.resize((preview_width, preview_height), Image.LANCZOS)
+                
+                cols[idx % 4].image(preview_img, caption=fname, use_container_width=True)
 
 st.divider()
 
