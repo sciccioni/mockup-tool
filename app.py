@@ -8,11 +8,22 @@ import zipfile
 # --- 1. CONFIGURAZIONE E MEMORIA ---
 st.set_page_config(page_title="PhotoBook PRO", layout="wide")
 
-# Inizializziamo la libreria se non esiste
+# Inizializzazione MEMORIA PERSISTENTE
 if 'libreria' not in st.session_state:
     st.session_state['libreria'] = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
 
-# --- 2. FUNZIONI DI ELABORAZIONE (LOGICA ORIGINALE) ---
+# Chiave dinamica per resettare l'upload dei design
+if 'design_uploader_key' not in st.session_state:
+    st.session_state['design_uploader_key'] = 0
+
+def get_exact_orientation(pil_img):
+    w, h = pil_img.size
+    ratio = w / h
+    if ratio < 0.94: return "Verticali"
+    if ratio > 1.06: return "Orizzontali"
+    return "Quadrati"
+
+# --- 2. LOGICA DI ELABORAZIONE (NON TOCCATA) ---
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 5)
@@ -51,73 +62,90 @@ def process_image(tmpl_pil, cover_pil):
         result[reg['y1']:reg['y2']+1, reg['x1']:reg['fx1'], :] = spine_color * spine_ratio
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-# --- 3. SIDEBAR (CARICAMENTO) ---
+# --- 3. SIDEBAR ---
 with st.sidebar:
     st.header("📂 Gestione Libreria")
-    categoria = st.selectbox("Seleziona dove salvare:", ["Verticali", "Orizzontali", "Quadrati"])
-    file_caricati = st.file_uploader("Trascina qui i template bianchi", accept_multiple_files=True, key="uploader")
+    target_cat = st.selectbox("Categoria di destinazione:", ["Verticali", "Orizzontali", "Quadrati"])
+    uploaded_files = st.file_uploader("Trascina i template bianchi", accept_multiple_files=True)
     
-    if st.button("📥 SALVA NELLA LIBRERIA"):
-        if file_caricati:
-            for f in file_caricati:
-                # Salviamo l'immagine direttamente nello stato della sessione
+    if st.button("💾 CARICA NELLA LIBRERIA"):
+        if uploaded_files:
+            for f in uploaded_files:
                 img = Image.open(f).convert('RGB')
-                st.session_state['libreria'][categoria][f.name] = img
-            st.success(f"Salvato in {categoria}!")
+                st.session_state['libreria'][target_cat][f.name] = img
+            st.success("Libreria aggiornata!")
         else:
-            st.error("Nessun file selezionato!")
+            st.error("Seleziona i file!")
 
     st.divider()
-    if st.button("🗑️ SVUOTA TUTTO"):
+    if st.button("🗑️ SVUOTA TUTTA LA LIBRERIA"):
         st.session_state['libreria'] = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
         st.rerun()
 
-# --- 4. MAIN PAGE (VISUALIZZAZIONE E PRODUZIONE) ---
+# --- 4. MAIN PAGE ---
 st.title("📖 PhotoBook Composer PRO")
 
-# Mostriamo le anteprime per ogni tab
-st.subheader("🖼️ Libreria Template (Anteprime)")
-t1, t2, t3 = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
+# Galleria Anteprime
+st.subheader("🖼️ Template salvati in memoria")
+tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
 
-def mostra_galleria(cat_name, tab_obj):
-    with tab_obj:
-        items = st.session_state['libreria'][cat_name]
-        if not items:
-            st.info(f"La libreria {cat_name} è vuota. Usa la barra a sinistra per caricare i file.")
+for i, cat_name in enumerate(["Verticali", "Orizzontali", "Quadrati"]):
+    with tabs[i]:
+        tmpls_dict = st.session_state['libreria'][cat_name]
+        if not tmpls_dict:
+            st.info(f"Nessun template {cat_name} in memoria.")
         else:
-            cols = st.columns(4)
-            for i, (nome, img) in enumerate(items.items()):
-                cols[i % 4].image(img, caption=nome, use_container_width=True)
-
-mostra_galleria("Verticali", t1)
-mostra_galleria("Orizzontali", t2)
-mostra_galleria("Quadrati", t3)
+            grid = st.columns(5)
+            for idx, (name, img) in enumerate(tmpls_dict.items()):
+                grid[idx % 5].image(img, caption=name, use_container_width=True)
 
 st.divider()
 
-# Area Produzione
+# --- SEZIONE PRODUZIONE (AGGIORNATA) ---
 st.subheader("⚡ Produzione Mockup")
-scelta = st.radio("Quale formato vuoi generare ora?", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+c1, c2 = st.columns([2, 1])
 
-disegni = st.file_uploader(f"Trascina qui le grafiche {scelta}", accept_multiple_files=True, key="disegni_prod")
+with c1:
+    prod_cat = st.radio("Seleziona formato grafiche:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+
+with c2:
+    # Bottone per cancellare solo i design caricati
+    if st.button("🧹 CANCELLA TUTTE LE GRAFICHE"):
+        st.session_state['design_uploader_key'] += 1
+        st.rerun()
+
+# Upload con feedback migliorato
+designs = st.file_uploader(
+    f"Trascina qui le grafiche {prod_cat}", 
+    accept_multiple_files=True, 
+    key=f"design_upload_{st.session_state['design_uploader_key']}"
+)
+
+if designs:
+    st.success(f"📦 {len(designs)} immagini caricate correttamente. Pronte per essere elaborate su {len(st.session_state['libreria'][prod_cat])} template.")
+    
+    # Anteprima veloce delle prime 5 immagini per feedback visivo
+    with st.expander("👁️ Clicca per vedere anteprima grafiche caricate"):
+        p_cols = st.columns(5)
+        for i, d in enumerate(designs[:10]): # Mostra max 10 anteprime
+            p_cols[i % 5].image(Image.open(d), use_container_width=True)
 
 if st.button("🚀 AVVIA GENERAZIONE"):
-    tmpls_attivi = st.session_state['libreria'][scelta]
-    if not tmpls_attivi or not disegni:
-        st.error("Mancano i template o le grafiche! Controlla la libreria.")
+    active_tmpls = st.session_state['libreria'][prod_cat]
+    if not active_tmpls or not designs:
+        st.error("Errore: Assicurati di avere template in libreria e grafiche caricate!")
     else:
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
             progress = st.progress(0)
-            log = st.empty()
-            total = len(disegni) * len(tmpls_attivi)
+            status = st.empty()
+            total = len(designs) * len(active_tmpls)
             count = 0
-            
-            for d_file in disegni:
+            for d_file in designs:
                 d_img = Image.open(d_file)
                 d_name = os.path.splitext(d_file.name)[0]
-                for t_name, t_img in tmpls_attivi.items():
-                    log.text(f"Processing: {d_name} su {t_name}")
+                for t_name, t_img in active_tmpls.items():
+                    status.text(f"Elaborazione: {d_name} su {t_name}")
                     res = process_image(t_img, d_img)
                     if res:
                         img_io = io.BytesIO()
@@ -126,5 +154,5 @@ if st.button("🚀 AVVIA GENERAZIONE"):
                     count += 1
                     progress.progress(count / total)
         
-        st.success(f"✅ Generati {count} mockup!")
-        st.download_button("📥 SCARICA ZIP RISULTATI", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}.zip")
+        st.success(f"✅ Creati {count} mockup!")
+        st.download_button("📥 SCARICA ZIP", data=zip_buffer.getvalue(), file_name=f"Mockups_{prod_cat}.zip")
