@@ -433,6 +433,7 @@ libreria, thumbnails = get_template_thumbnails()
 # --- INTERFACCIA ---
 st.title("📖 PhotoBook Mockup Compositor - V3 Fixed")
 
+"""
 # --- MENU PRINCIPALE ---
 menu = st.sidebar.radio("Menu", ["📚 Templates", "🎯 Calibrazione Coordinate", "⚡ Produzione"])
 
@@ -599,7 +600,7 @@ elif menu == "🎯 Calibrazione Coordinate":
                             st.rerun()
         else:
             st.info(f"Nessun template in {cat_choice}")
-
+"""
 elif menu == "⚡ Produzione":
     st.subheader("⚡ Produzione")
     
