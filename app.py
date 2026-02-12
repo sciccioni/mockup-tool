@@ -1,6 +1,6 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 import os
 import io
 import zipfile
@@ -16,14 +16,33 @@ if 'uploader_key' not in st.session_state:
 TEMPLATE_MAPS_FILE = "template_coordinates.json"
 
 def load_template_maps():
-    """Carica le coordinate da file JSON o usa quelle di default"""
+    """Carica le coordinate da file JSON o usa quelle di default aggiornate"""
+    # Coordinate HARDCODED aggiornate dal tuo JSON
     default_maps = {
-    "base_verticale_temi_app.jpg": {"coords": (34.4, 9.1, 30.6, 80.4), "offset": 1},
-    "base_orizzontale_temi_app.jpg": {"coords": (18.9, 9.4, 61.9, 83.0), "offset": 1},
-    "base_orizzontale_temi_app3.jpg": {"coords": (18.7, 9.4, 62.2, 82.9), "offset": 1},
-    "base_quadrata_temi_app.jpg": {"coords": (27.7, 10.5, 44.7, 79.4), "offset": 1},
-    "base_bottom_app.jpg": {"coords": (21.8, 4.7, 57.0, 91.7), "offset": 1},
-    "15x22-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
+        "base_verticale_temi_app.jpg": {
+            "coords": (34.4, 9.1, 30.6, 80.4),
+            "offset": 1
+        },
+        "base_orizzontale_temi_app.jpg": {
+            "coords": (18.9, 9.4, 61.9, 83.0),
+            "offset": 1
+        },
+        "base_orizzontale_temi_app3.jpg": {
+            "coords": (18.7, 9.4, 62.2, 82.9),
+            "offset": 1
+        },
+        "base_quadrata_temi_app.jpg": {
+            "coords": (27.7, 10.5, 44.7, 79.4),
+            "offset": 1
+        },
+        "base_bottom_app.jpg": {
+            "coords": (21.8, 4.7, 57.0, 91.7),
+            "offset": 1
+        },
+        "15x22-crea la tua grafica.jpg": {
+            "coords": (33.1, 21.4, 33.9, 57.0),
+            "offset": 2
+        }
     }
     
     if os.path.exists(TEMPLATE_MAPS_FILE):
@@ -71,7 +90,7 @@ def get_manual_cat(filename):
     return "Altro"
 
 # ===================================================================
-# LOGICA V3 FIXED
+# LOGICA V3 FIXED (CON SMART CROP)
 # ===================================================================
 
 def find_book_region(tmpl_gray, bg_val):
@@ -116,9 +135,8 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = (0.299 * tmpl_rgb[:,:,0] + 0.587 * tmpl_rgb[:,:,1] + 0.114 * tmpl_rgb[:,:,2])
     h, w = tmpl_gray.shape
-    cover = np.array(cover_pil.convert('RGB')).astype(np.float64)
     
-    # --- LOGICA PRECISION PER TEMPLATE APP (COORDINATE ESATTE) ---
+    # --- LOGICA PRECISION PER TEMPLATE APP (COORDINATE ESATTE + SMART CROP) ---
     if template_name in TEMPLATE_MAPS:
         template_data = TEMPLATE_MAPS[template_name]
         px, py, pw, ph = template_data["coords"]
@@ -126,13 +144,34 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         if border_offset is None:
             border_offset = template_data.get("offset", 1)
         
+        # 1. Calcola l'area di destinazione
         x1 = int((px * w) / 100) + border_offset
         y1 = int((py * h) / 100) + border_offset
         tw = int((pw * w) / 100) - (border_offset * 2)
         th = int((ph * h) / 100) - (border_offset * 2)
         
-        cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
+        # 2. CROP INTELLIGENTE (EVITA STRETCHING)
+        target_aspect = tw / th
+        img_w, img_h = cover_pil.size
+        img_aspect = img_w / img_h
         
+        if img_aspect > target_aspect:
+            # Immagine troppo larga: taglia i lati
+            new_h = img_h
+            new_w = int(new_h * target_aspect)
+            offset_x = (img_w - new_w) // 2
+            crop_box = (offset_x, 0, offset_x + new_w, new_h)
+        else:
+            # Immagine troppo alta: taglia sopra/sotto
+            new_w = img_w
+            new_h = int(new_w / target_aspect)
+            offset_y = (img_h - new_h) // 2
+            crop_box = (0, offset_y, new_w, offset_y + new_h)
+            
+        cover_cropped = cover_pil.crop(crop_box)
+        cover_res = np.array(cover_cropped.resize((tw, th), Image.LANCZOS)).astype(np.float64)
+        
+        # 3. Applica ombre e fusione
         tmpl_gray_u8 = np.array(tmpl_pil.convert('L')).astype(np.float64)
         book_shadows = tmpl_gray_u8[y1:y1+th, x1:x1+tw]
         shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
@@ -143,7 +182,9 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
             
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-    # --- LOGICA PER ALTRI TEMPLATE ---
+    # --- LOGICA PER ALTRI TEMPLATE (SENZA MAPPA) ---
+    cover = np.array(cover_pil.convert('RGB')).astype(np.float64)
+    
     corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
     bg_val = float(np.median(corners))
     
@@ -157,7 +198,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     target_w = bx2 - bx1 + 1
     target_h = by2 - by1 + 1
     
-    # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
+    # LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO)
     if "base_copertina" in template_name.lower():
         real_bx1 = 0
         for x in range(w):
@@ -215,7 +256,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
             
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
     
-    # --- LOGICA NORMALE PER ALTRI TEMPLATE ---
+    # LOGICA NORMALE PER ALTRI TEMPLATE
     border_pixels = []
     border_pixels.append(cover[:, :5].reshape(-1, 3))
     border_pixels.append(cover[-5:, :].reshape(-1, 3))
@@ -284,7 +325,7 @@ def apply_test_image_blended(template_img, test_img, px, py, pw, ph, border_offs
     tw = int((pw * w) / 100) - (border_offset * 2)
     th = int((ph * h) / 100) - (border_offset * 2)
     
-    # --- CROP CON PROPORZIONI COME NEL RENDERING ---
+    # --- CROP CON PROPORZIONI ---
     test_w, test_h = test_img.size
     target_aspect = tw / th
     test_aspect = test_w / test_h
@@ -315,7 +356,6 @@ def apply_test_image_blended(template_img, test_img, px, py, pw, ph, border_offs
 
 def draw_rectangle_on_template(template_img, px, py, pw, ph):
     """Disegna un rettangolo rosso sull'immagine per mostrare l'area"""
-    from PIL import ImageDraw
     img = template_img.copy()
     draw = ImageDraw.Draw(img)
     
@@ -534,7 +574,7 @@ elif menu == "🎯 Calibrazione Coordinate":
                         if st.button("💾 SALVA COORDINATE", type="primary", use_container_width=True):
                             TEMPLATE_MAPS[selected_template] = {
                                 "coords": (st.session_state.cal_px, st.session_state.cal_py,
-                                          st.session_state.cal_pw, st.session_state.cal_ph),
+                                           st.session_state.cal_pw, st.session_state.cal_ph),
                                 "offset": st.session_state.cal_offset
                             }
                             save_template_maps(TEMPLATE_MAPS)
