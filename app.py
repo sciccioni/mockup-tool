@@ -1,74 +1,109 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
-import io
+from PIL import Image, ImageFilter, ImageDraw
+
+st.set_page_config(layout="wide", page_title="Calibratore Precisione V3.1")
 
 # --- DIZIONARIO COORDINATE AGGIORNATO ---
 TEMPLATE_MAPS = {
-    "base_verticale_temi_app.jpg": (34.6, 9.2, 30.2, 80.3),
-    "base_bottom_app.jpg": (21.9, 4.9, 56.5, 91.3),
-    "base_orizzontale_temi_app.jpg": (18.9, 9.4, 61.8, 83.0),
-    "base_orizzontale_temi_app3.jpg": (18.7, 9.4, 62.2, 82.6),
-    "base_quadrata_temi_app.jpg": (27.8, 10.8, 44.5, 79.0),
+    'base_verticale_temi_app.jpg': [34.6, 9.2, 30.2, 80.3],
+    'base_bottom_app.jpg': [21.9, 4.9, 56.5, 91.3],
+    'base_orizzontale_temi_app.jpg': [18.9, 9.4, 61.8, 83.0],
+    'base_orizzontale_temi_app3.jpg': [18.7, 9.4, 62.2, 82.6],
+    'base_quadrata_temi_app.jpg': [27.8, 10.8, 44.5, 79.0],
 }
 
-def apply_mockup(tmpl_pil, cover_pil, x_pct, y_pct, w_pct, h_pct):
-    tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
-    tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
-    h, w, _ = tmpl_rgb.shape
+def apply_blending(tmpl_pil, cover_pil, coords):
+    """Applica il blending reale (Multiply) per la calibrazione."""
+    tmpl_rgb = tmpl_pil.convert('RGB')
+    w_f, h_f = tmpl_rgb.size
+    px, py, pw, ph = coords
     
     # Conversione percentuali -> pixel
-    x1, y1 = int((x_pct * w) / 100), int((y_pct * h) / 100)
-    tw, th = int((w_pct * w) / 100), int((h_pct * h) / 100)
+    x1, y1 = int((px * w_f) / 100), int((py * h_f) / 100)
+    tw, th = int((pw * w_f) / 100), int((ph * h_f) / 100)
+    
+    # Protezione per dimensioni zero o negative
+    tw, th = max(1, tw), max(1, th)
     
     # Resize cover
-    cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
+    cover_res = cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)
+    cover_arr = np.array(cover_res).astype(np.float64)
     
-    # Shadow Map (Multiply) - Prende le ombre originali del libro
-    book_shadows = tmpl_gray[y1:y1+th, x1:x1+tw]
-    shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
+    # Shadow Map (Texture del libro)
+    crop_area = tmpl_pil.convert('L').crop((x1, y1, x1+tw, y1+th))
+    crop_gray = np.array(crop_area).astype(np.float64)
+    shadow_map = np.expand_dims(np.clip(crop_gray / 255.0, 0.0, 1.0), axis=2)
     
-    result = tmpl_rgb.copy()
-    for c in range(3):
-        result[y1:y1+th, x1:x1+tw, c] = cover_res[:, :, c] * shadow_map
+    # Moltiplicazione (Blending)
+    blended = (cover_arr * shadow_map).astype(np.uint8)
+    
+    # Ricostruzione finale
+    final_img = tmpl_rgb.copy()
+    final_img.paste(Image.fromarray(blended), (x1, y1))
+    return final_img
+
+# --- INTERFACCIA ---
+st.title("🎯 Calibrazione Millimetrica (+ / -)")
+
+# Selettore Template per caricare i valori predefiniti
+st.sidebar.subheader("Carica Preset Salvato")
+selected_preset = st.sidebar.selectbox("Usa coordinate di:", ["Nessuno"] + list(TEMPLATE_MAPS.keys()))
+
+if 'coords' not in st.session_state:
+    st.session_state.coords = [15.0, 15.0, 70.0, 70.0]
+
+# Aggiorna coordinate se viene selezionato un preset
+if selected_preset != "Nessuno":
+    st.session_state.coords = TEMPLATE_MAPS[selected_preset]
+
+col_ctrl, col_view = st.columns([1, 2])
+
+with col_ctrl:
+    st.subheader("1. Carica File")
+    up_t = st.file_uploader("Template JPG", type=['jpg', 'png'])
+    up_c = st.file_uploader("Cover di Prova", type=['jpg', 'png'])
+    
+    if up_t and up_c:
+        img_t = Image.open(up_t)
+        img_c = Image.open(up_c)
+        w_c, h_c = img_c.size
+        aspect_ratio = h_c / w_c
         
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+        st.divider()
+        st.subheader("2. Regolazione Fine")
+        
+        lock_aspect = st.checkbox("Blocca Proporzioni (Anti-Storpiamento)", value=True)
+        
+        st.write("**Dimensioni**")
+        c_w, c_h = st.columns(2)
+        with c_w:
+            st.session_state.coords[2] = st.number_input("Larghezza (W %)", value=float(st.session_state.coords[2]), step=0.1, format="%.1f")
+        
+        if lock_aspect:
+            w_tmpl, h_tmpl = img_t.size
+            h_perc = (st.session_state.coords[2] * w_tmpl * aspect_ratio) / h_tmpl
+            st.session_state.coords[3] = round(h_perc, 1)
+            with c_h:
+                st.write(f"Altezza (H %)\n\n**{st.session_state.coords[3]}** (Auto)")
+        else:
+            with c_h:
+                st.session_state.coords[3] = st.number_input("Altezza (H %)", value=float(st.session_state.coords[3]), step=0.1, format="%.1f")
 
-st.title("🛠️ Calibratore Mockup Ultra-Preciso")
+        st.write("**Posizionamento**")
+        c_x, c_y = st.columns(2)
+        with c_x:
+            st.session_state.coords[0] = st.number_input("Sposta X (%)", value=float(st.session_state.coords[0]), step=0.1, format="%.1f")
+        with c_y:
+            st.session_state.coords[1] = st.number_input("Sposta Y (%)", value=float(st.session_state.coords[1]), step=0.1, format="%.1f")
+        
+        st.divider()
+        st.subheader("3. Codice da Copiare")
+        st.code(f"'{up_t.name}': {st.session_state.coords},", language="python")
 
-st.sidebar.header("⚙️ Regolazione Fine")
-
-# Seleziona il template per vedere i valori salvati o modificarli
-t_nome = st.sidebar.selectbox("Template da calibrare", list(TEMPLATE_MAPS.keys()))
-default_vals = TEMPLATE_MAPS.get(t_nome, (0, 0, 100, 100))
-
-# SLIDERS PER TROVARE I PUNTI ESATTI
-sc_x = st.sidebar.slider("X (Inizio Orizzontale %)", 0.0, 100.0, float(default_vals[0]), 0.1)
-sc_y = st.sidebar.slider("Y (Inizio Verticale %)", 0.0, 100.0, float(default_vals[1]), 0.1)
-sc_w = st.sidebar.slider("Larghezza (%)", 0.0, 100.0, float(default_vals[2]), 0.1)
-sc_h = st.sidebar.slider("Altezza (%)", 0.0, 100.0, float(default_vals[3]), 0.1)
-
-st.info(f"📍 Coordinate attuali da copiare nel codice: **({sc_x}, {sc_y}, {sc_w}, {sc_h})**")
-
-# Caricamento file per test
-col_t, col_c = st.columns(2)
-with col_t:
-    up_tmpl = st.file_uploader("Carica il Template JPG", type=['jpg', 'jpeg'])
-with col_c:
-    up_cover = st.file_uploader("Carica una Copertina di test", type=['jpg', 'png'])
-
-if up_tmpl and up_cover:
-    img_t = Image.open(up_tmpl)
-    img_c = Image.open(up_cover)
-    
-    # Anteprima in tempo reale
-    result_img = apply_mockup(img_t, img_c, sc_x, sc_y, sc_w, sc_h)
-    st.image(result_img, caption="Anteprima Calibrazione", use_column_width=True)
-    
-    # Mostra anche il template originale per riferimento
-    st.divider()
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(img_t, caption="Template Originale", use_column_width=True)
-    with col2:
-        st.image(img_c, caption="Cover di Test", use_column_width=True)
+with col_view:
+    if up_t and up_c:
+        res = apply_blending(img_t, img_c, st.session_state.coords)
+        st.image(res, caption="Anteprima REALE con Blending e Pixel-Precision", use_container_width=True)
+    else:
+        st.info("Carica template e cover per attivare i controlli.")
