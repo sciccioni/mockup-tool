@@ -6,27 +6,24 @@ import io
 import zipfile
 
 # --- 1. COORDINATE E CONFIGURAZIONE ---
-st.set_page_config(page_title="PhotoBook Master V7.1", layout="wide")
+st.set_page_config(page_title="PhotoBook Master V7.2", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
-        # Template Piatti (0,0,100,100) - Manteniamo il blending per texture carta
         "base_copertina_verticale.jpg": [0.0, 0.0, 100.0, 100.0],
         "base_copertina_orizzontale.jpg": [0.0, 0.0, 100.0, 100.0],
-        # Template App (Calibrati)
         "base_verticale_temi_app.jpg": [34.6, 9.2, 30.2, 80.3],
         "base_bottom_app.jpg": [21.9, 4.9, 56.5, 91.3],
         "base_orizzontale_temi_app.jpg": [18.9, 9.4, 61.8, 83.0],
         "base_orizzontale_temi_app3.jpg": [18.7, 9.4, 62.2, 82.6],
         "base_quadrata_temi_app.jpg": [27.8, 10.8, 44.5, 79.0],
-        # 30x30 Default (Non a tutto campo per evitare l'effetto poster)
         "30x30-crea la tua grafica.jpg": [15.0, 15.0, 70.0, 70.0],
     }
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- 2. MOTORE DI RENDERING (OMBRE + BLUR) ---
+# --- 2. MOTORE DI RENDERING ---
 def get_feathered_mask(size, blur_radius):
     mask = Image.new("L", size, 255)
     if blur_radius > 0:
@@ -38,30 +35,25 @@ def get_feathered_mask(size, blur_radius):
 
 def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
-    tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
-    w_f, h_f, _ = tmpl_rgb.shape
+    w_f, h_f = tmpl_pil.size
 
-    # Check coordinate
     if t_name not in st.session_state.coords:
         st.session_state.coords[t_name] = [10.0, 10.0, 80.0, 80.0]
 
     px, py, pw, ph = st.session_state.coords[t_name]
-    x1, y1 = int((px * h_f) / 100), int((py * w_f) / 100) # Inversione per array numpy
-    x1, y1 = int((px * tmpl_pil.size[0]) / 100), int((py * tmpl_pil.size[1]) / 100)
-    tw, th = int((pw * tmpl_pil.size[0]) / 100), int((ph * tmpl_pil.size[1]) / 100)
-
-    # Resize cover e creazione shadow map
-    cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
+    x1, y1 = int((px * w_f) / 100), int((py * h_f) / 100)
+    tw, th = int((pw * w_f) / 100), int((ph * h_f) / 100)
     
-    # Shadow Map: prende i grigi del template e li usa per scurire la cover (Multiply)
+    # Protezione dimensioni
+    tw, th = max(1, tw), max(1, th)
+
+    cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
     shadow_map = np.array(tmpl_pil.convert('L').crop((x1, y1, x1+tw, y1+th))).astype(np.float64) / 255.0
     shadow_map = np.expand_dims(shadow_map, axis=2)
 
-    # Maschera sfumatura
     f_mask = get_feathered_mask((tw, th), blur_rad)
     alpha = np.expand_dims(np.array(f_mask).astype(np.float64) / 255.0, axis=2)
 
-    # Composizione
     orig_area = np.array(tmpl_pil.convert('RGB').crop((x1, y1, x1+tw, y1+th))).astype(np.float64)
     cover_final = cover_res * shadow_map
     blended = (cover_final * alpha) + (orig_area * (1 - alpha))
@@ -94,15 +86,15 @@ def load_library():
 libreria = load_library()
 
 # --- 4. INTERFACCIA ---
-st.title("📖 PhotoBook Master V7.1")
+st.title("📖 PhotoBook Master V7.2")
 
 t_prod, t_sett = st.tabs(["🚀 PRODUZIONE BATCH", "⚙️ IMPOSTAZIONI"])
 
 with t_prod:
     col_l, col_r = st.columns([1, 2])
     with col_l:
-        formato = st.radio("Scegli Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-        sfocatura = st.slider("Morbidezza Bordi (px):", 0.0, 15.0, 5.0, 0.5)
+        formato = st.radio("Scegli Categoria:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+        sfocatura = st.slider("Morbidezza Bordi:", 0.0, 15.0, 5.0, 0.5)
         if st.button("🗑️ SVUOTA DESIGN"):
             st.session_state.uploader_key += 1
             st.rerun()
@@ -120,16 +112,27 @@ with t_prod:
                         buf = io.BytesIO()
                         res.save(buf, format='JPEG', quality=95)
                         zf.writestr(f"{os.path.splitext(d.name)[0]}/{t_n}.jpg", buf.getvalue())
-            st.download_button("📥 SCARICA ZIP", z_io.getvalue(), "Mockups.zip")
+            st.download_button("📥 SCARICA TUTTO", z_io.getvalue(), "Mockups.zip")
         
-        # Preview rapida
-        t_pre_n = list(libreria[formato].keys())[0]
-        st.image(process_mockup(libreria[formato][t_pre_n], Image.open(disegni[-1]), t_pre_n, sfocatura), use_column_width=True)
+        st.divider()
+        st.subheader(f"Anteprime per categoria {formato}")
+        
+        # --- LOGICA MULTI-ANTEPRIMA ---
+        # Creiamo una griglia a 2 colonne per vedere tutto
+        target_templates = libreria[formato]
+        grid_cols = st.columns(2)
+        
+        for idx, (t_name, t_img) in enumerate(target_templates.items()):
+            with grid_cols[idx % 2]:
+                st.caption(f"Template: {t_name}")
+                # Usiamo l'ultimo disegno caricato per l'anteprima
+                preview_img = process_mockup(t_img, Image.open(disegni[-1]), t_name, sfocatura)
+                st.image(preview_img, use_column_width=True)
 
 with t_sett:
     st.subheader("🛠️ Calibrazione Template")
     if libreria["Tutti"]:
-        t_mod = st.selectbox("Template da regolare:", list(libreria["Tutti"].keys()))
+        t_mod = st.selectbox("Scegli template da regolare:", list(libreria["Tutti"].keys()))
         if t_mod not in st.session_state.coords:
             st.session_state.coords[t_mod] = [10.0, 10.0, 80.0, 80.0]
         
@@ -139,7 +142,7 @@ with t_sett:
             st.session_state.coords[t_mod][1] = st.number_input("Y %", value=st.session_state.coords[t_mod][1], step=0.1)
             st.session_state.coords[t_mod][2] = st.number_input("W %", value=st.session_state.coords[t_mod][2], step=0.1)
             st.session_state.coords[t_mod][3] = st.number_input("H %", value=st.session_state.coords[t_mod][3], step=0.1)
-            t_test = st.file_uploader("Immagine di test:", type=['jpg', 'png'])
+            t_test = st.file_uploader("Carica immagine di test:", type=['jpg', 'png'], key="test_img")
             st.code(f"'{t_mod}': {st.session_state.coords[t_mod]},")
         with c_pre:
             if t_test:
