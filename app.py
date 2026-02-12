@@ -1,9 +1,15 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
+import os
 import io
+import zipfile
 
-# --- DIZIONARIO COORDINATE (Queste le salverai una volta calibrate) ---
+# --- 1. CONFIGURAZIONE E COORDINATE PRECISE ---
+st.set_page_config(page_title="PhotoBook Production Pro", layout="wide")
+
+# Inserisci qui le coordinate che hai trovato con il calibratore.
+# Se le coordinate non sono perfette, basta cambiare questi numeri.
 TEMPLATE_MAPS = {
     "base_verticale_temi_app.jpg": (35.1, 10.4, 29.8, 79.2),
     "base_orizzontale_temi_app.jpg": (19.4, 9.4, 61.2, 81.2),
@@ -12,63 +18,99 @@ TEMPLATE_MAPS = {
     "base_bottom_app.jpg": (22.8, 4.4, 54.8, 89.6),
 }
 
-def apply_mockup(tmpl_pil, cover_pil, x_pct, y_pct, w_pct, h_pct):
+# --- 2. MOTORE DI COMPOSIZIONE ---
+def composite_engine(tmpl_pil, cover_pil, filename):
+    """Applica la copertina al template usando il mapping e le ombre."""
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
     h, w, _ = tmpl_rgb.shape
     
-    # Conversione percentuali -> pixel
-    x1, y1 = int((x_pct * w) / 100), int((y_pct * h) / 100)
-    tw, th = int((w_pct * w) / 100), int((h_pct * h) / 100)
+    if filename not in TEMPLATE_MAPS:
+        return None # Salta se il file non è mappato
+
+    px, py, pw, ph = TEMPLATE_MAPS[filename]
+    x1, y1 = int((px * w) / 100), int((py * h) / 100)
+    tw, th = int((pw * w) / 100), int((ph * h) / 100)
     
-    # Resize cover
+    # Resize della cover
     cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
     
-    # Shadow Map (Multiply) - Prende le ombre originali del libro
+    # Shadow Map (Effetto Multiply) per il realismo della rilegatura
     book_shadows = tmpl_gray[y1:y1+th, x1:x1+tw]
     shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
     
     result = tmpl_rgb.copy()
     for c in range(3):
+        # Fusione: Cover * Ombre originali
         result[y1:y1+th, x1:x1+tw, c] = cover_res[:, :, c] * shadow_map
         
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-st.title("🛠️ Calibratore Mockup Ultra-Preciso")
+# --- 3. CARICAMENTO LIBRERIA TEMPLATE ---
+@st.cache_data
+def load_template_library():
+    base_path = "templates" # Assicurati che la cartella esista
+    lib = {}
+    if os.path.exists(base_path):
+        for f in os.listdir(base_path):
+            if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                lib[f] = Image.open(os.path.join(base_path, f))
+    return lib
 
-st.sidebar.header("⚙️ Regolazione Fine")
+templates = load_template_library()
 
-# Seleziona il template per vedere i valori salvati o modificarli
-t_nome = st.sidebar.selectbox("Template da calibrare", list(TEMPLATE_MAPS.keys()))
-default_vals = TEMPLATE_MAPS.get(t_nome, (0, 0, 100, 100))
+# --- 4. INTERFACCIA UTENTE ---
+st.title("📖 PhotoBook Production System")
 
-# SLIDERS PER TROVARE I PUNTI ESATTI
-sc_x = st.sidebar.slider("X (Inizio Orizzontale %)", 0.0, 100.0, default_vals[0], 0.1)
-sc_y = st.sidebar.slider("Y (Inizio Verticale %)", 0.0, 100.0, default_vals[1], 0.1)
-sc_w = st.sidebar.slider("Larghezza (%)", 0.0, 100.0, default_vals[2], 0.1)
-sc_h = st.sidebar.slider("Altezza (%)", 0.0, 100.0, default_vals[3], 0.1)
+if not templates:
+    st.error("❌ Cartella '/templates' non trovata o vuota. Carica i template lì dentro.")
+else:
+    with st.sidebar:
+        st.header("Impostazioni")
+        t_selezionato = st.selectbox("Scegli il Template:", list(templates.keys()))
+        st.divider()
+        st.info("Questo script usa coordinate fisse per una precisione millimetrica.")
 
-st.info(f"📍 Coordinate attuali da copiare nel codice: **({sc_x}, {sc_y}, {sc_w}, {sc_h})**")
+    st.subheader("1. Carica i tuoi Design")
+    disegni = st.file_uploader("Trascina qui i file delle copertine (JPG/PNG):", accept_multiple_files=True)
 
-# Caricamento file per test
-col_t, col_c = st.columns(2)
-with col_t:
-    up_tmpl = st.file_uploader("Carica il Template JPG", type=['jpg', 'jpeg'])
-with col_c:
-    up_cover = st.file_uploader("Carica una Copertina di test", type=['jpg', 'png'])
+    if disegni:
+        st.subheader(f"2. Elaborazione ({len(disegni)} file)")
+        
+        if st.button("🚀 GENERA E SCARICA TUTTO"):
+            zip_buf = io.BytesIO()
+            
+            with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zip_file:
+                progress_bar = st.progress(0)
+                
+                for idx, d_file in enumerate(disegni):
+                    d_img = Image.open(d_file)
+                    # Applichiamo il motore di composizione
+                    mockup_finale = composite_engine(templates[t_selezionato], d_img, t_selezionato)
+                    
+                    if mockup_finale:
+                        # Salvataggio in memoria
+                        img_byte_arr = io.BytesIO()
+                        mockup_finale.save(img_byte_arr, format='JPEG', quality=95)
+                        
+                        # Aggiunta allo ZIP
+                        nome_file = f"{os.path.splitext(d_file.name)[0]}_MOCKUP.jpg"
+                        zip_file.writestr(nome_file, img_byte_arr.getvalue())
+                    
+                    progress_bar.progress((idx + 1) / len(disegni))
+            
+            st.success("✅ Generazione completata!")
+            st.download_button(
+                label="📥 SCARICA ZIP",
+                data=zip_buf.getvalue(),
+                file_name=f"Mockups_{t_selezionato}.zip",
+                mime="application/zip"
+            )
 
-if up_tmpl and up_cover:
-    img_t = Image.open(up_tmpl)
-    img_c = Image.open(up_cover)
-    
-    # Anteprima in tempo reale
-    result_img = apply_mockup(img_t, img_c, sc_x, sc_y, sc_w, sc_h)
-    st.image(result_img, caption="Anteprima Calibrazione", use_column_width=True)
-    
-    # Mostra anche il template originale per riferimento
-    st.divider()
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(img_t, caption="Template Originale", use_column_width=True)
-    with col2:
-        st.image(img_c, caption="Cover di Test", use_column_width=True)
+    # --- ANTEPRIMA RAPIDA ---
+    if disegni and templates:
+        st.divider()
+        st.subheader("Anteprima dell'ultimo file")
+        test_res = composite_engine(templates[t_selezionato], Image.open(disegni[-1]), t_selezionato)
+        if test_res:
+            st.image(test_res, use_column_width=True)
