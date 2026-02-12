@@ -29,12 +29,12 @@ def load_template_maps():
         try:
             with open(TEMPLATE_MAPS_FILE, 'r') as f:
                 loaded = json.load(f)
-                # Converte il vecchio formato (tuple) al nuovo formato (dict con coords e offset)
+                # Converte il formato
                 result = {}
                 for k, v in loaded.items():
-                    if isinstance(v, list):  # Vecchio formato
+                    if isinstance(v, list):
                         result[k] = {"coords": tuple(v), "offset": 1}
-                    elif isinstance(v, dict):  # Nuovo formato
+                    elif isinstance(v, dict):
                         result[k] = {"coords": tuple(v.get("coords", (20, 10, 60, 80))), "offset": v.get("offset", 1)}
                     else:
                         result[k] = {"coords": tuple(v), "offset": 1}
@@ -45,7 +45,6 @@ def load_template_maps():
 
 def save_template_maps(maps):
     """Salva le coordinate nel file JSON"""
-    # Converte tuple in liste per JSON
     save_data = {}
     for k, v in maps.items():
         save_data[k] = {
@@ -60,14 +59,12 @@ TEMPLATE_MAPS = load_template_maps()
 # --- SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
-    # Template base piatti
     if "base_copertina_verticale" in fn: return "Verticali"
     if "base_verticale_temi_app" in fn: return "Verticali"
     if "base_bottom_app" in fn: return "Verticali"
     if "base_copertina_orizzontale" in fn: return "Orizzontali"
     if "base_orizzontale_temi_app" in fn: return "Orizzontali"
     if "base_quadrata_temi_app" in fn: return "Quadrati"
-    # Template specifici per dimensione
     if any(x in fn for x in ["15x22", "20x30"]): return "Verticali"
     if any(x in fn for x in ["20x15", "27x20", "32x24", "40x30"]): return "Orizzontali"
     if any(x in fn for x in ["20x20", "30x30"]): return "Quadrati"
@@ -116,7 +113,6 @@ def find_book_region(tmpl_gray, bg_val):
     }
 
 def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None):
-    # Carichiamo tutto in RGB
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = (0.299 * tmpl_rgb[:,:,0] + 0.587 * tmpl_rgb[:,:,1] + 0.114 * tmpl_rgb[:,:,2])
     h, w = tmpl_gray.shape
@@ -127,25 +123,20 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         template_data = TEMPLATE_MAPS[template_name]
         px, py, pw, ph = template_data["coords"]
         
-        # Usa l'offset salvato se non specificato
         if border_offset is None:
             border_offset = template_data.get("offset", 1)
         
-        # OFFSET: aggiungi pixel di sfocatura sui bordi
         x1 = int((px * w) / 100) + border_offset
         y1 = int((py * h) / 100) + border_offset
         tw = int((pw * w) / 100) - (border_offset * 2)
         th = int((ph * h) / 100) - (border_offset * 2)
         
-        # Resize della cover
         cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
         
-        # Shadow Map (Multiply blend mode) - USA GRAYSCALE A 8-BIT
         tmpl_gray_u8 = np.array(tmpl_pil.convert('L')).astype(np.float64)
         book_shadows = tmpl_gray_u8[y1:y1+th, x1:x1+tw]
         shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
         
-        # Composizione
         result = tmpl_rgb.copy()
         for c in range(3):
             result[y1:y1+th, x1:x1+tw, c] = cover_res[:, :, c] * shadow_map
@@ -168,7 +159,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     
     # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
     if "base_copertina" in template_name.lower():
-        # Template base: rilevamento manuale dei bordi
         real_bx1 = 0
         for x in range(w):
             col = tmpl_gray[:, x]
@@ -285,25 +275,38 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
 def apply_test_image_blended(template_img, test_img, px, py, pw, ph, border_offset=1):
-    """Applica l'immagine di test sul template con multiply blend come nel rendering finale"""
+    """Applica l'immagine di test sul template con multiply blend E CROP come nel rendering finale"""
     tmpl_rgb = np.array(template_img.convert('RGB')).astype(np.float64)
     h, w, _ = tmpl_rgb.shape
     
-    # Calcola coordinate con offset
     x1 = int((px * w) / 100) + border_offset
     y1 = int((py * h) / 100) + border_offset
     tw = int((pw * w) / 100) - (border_offset * 2)
     th = int((ph * h) / 100) - (border_offset * 2)
     
-    # Resize dell'immagine di test
-    test_resized = np.array(test_img.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
+    # --- CROP CON PROPORZIONI COME NEL RENDERING ---
+    test_w, test_h = test_img.size
+    target_aspect = tw / th
+    test_aspect = test_w / test_h
     
-    # Shadow Map (Multiply blend mode)
+    if test_aspect > target_aspect:
+        new_h = test_h
+        new_w = int(test_h * target_aspect)
+        crop_x = (test_w - new_w) // 2
+        crop_y = 0
+    else:
+        new_w = test_w
+        new_h = int(test_w / target_aspect)
+        crop_x = 0
+        crop_y = (test_h - new_h) // 2
+    
+    test_cropped = test_img.crop((crop_x, crop_y, crop_x + new_w, crop_y + new_h))
+    test_resized = np.array(test_cropped.resize((tw, th), Image.LANCZOS)).astype(np.float64)
+    
     tmpl_gray_u8 = np.array(template_img.convert('L')).astype(np.float64)
     book_shadows = tmpl_gray_u8[y1:y1+th, x1:x1+tw]
     shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
     
-    # Composizione con multiply blend
     result = tmpl_rgb.copy()
     for c in range(3):
         result[y1:y1+th, x1:x1+tw, c] = test_resized[:, :, c] * shadow_map
@@ -371,7 +374,7 @@ def get_all_template_names():
 libreria, thumbnails = get_template_thumbnails()
 
 # --- INTERFACCIA ---
-st.title("📖 PhotoBook Mockup Compositor - V3 Fixed (No White Lines)")
+st.title("📖 PhotoBook Mockup Compositor - V3 Fixed")
 
 # --- MENU PRINCIPALE ---
 menu = st.sidebar.radio("Menu", ["📚 Templates", "🎯 Calibrazione Coordinate", "⚡ Produzione"])
@@ -385,7 +388,8 @@ if menu == "📚 Templates":
     for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
         with tab:
             items = thumbnails[name]
-            if not items: st.info("Templates non trovati.")
+            if not items: 
+                st.info("Templates non trovati.")
             else:
                 cols = st.columns(4)
                 for idx, (fname, thumb) in enumerate(items.items()):
@@ -394,48 +398,40 @@ if menu == "📚 Templates":
 elif menu == "🎯 Calibrazione Coordinate":
     st.header("🎯 Calibrazione Coordinate Template")
     
-    st.info("💡 **Modalità di lavoro:** Le modifiche che fai qui sono visibili SOLO A TE nella tua sessione. Altri utenti non vedono le tue modifiche. Le coordinate vengono salvate SOLO quando premi il pulsante 'SALVA COORDINATE'.")
+    st.info("💡 Le coordinate vengono salvate nel file template_coordinates.json nella cartella dell'app.")
     
-    # Ottiene TUTTI i template dalla cartella
     all_template_names = get_all_template_names()
     
     if not all_template_names:
         st.error("Nessun template trovato nella cartella 'templates'!")
     else:
-        # Raggruppa per categoria
         templates_by_cat = {"Verticali": [], "Orizzontali": [], "Quadrati": [], "Altro": []}
         for tname in all_template_names:
             cat = get_manual_cat(tname)
             templates_by_cat[cat].append(tname)
         
-        # Seleziona categoria
         cat_choice = st.selectbox("Seleziona categoria:", ["Verticali", "Orizzontali", "Quadrati", "Altro"])
         
         if templates_by_cat[cat_choice]:
-            # Seleziona template specifico
             selected_template = st.selectbox("Seleziona template:", templates_by_cat[cat_choice])
             
             if selected_template:
-                # Carica il template
                 if cat_choice in libreria and selected_template in libreria[cat_choice]:
                     template_img = libreria[cat_choice][selected_template]
                 else:
-                    # Carica direttamente se non è in cache
                     template_img = Image.open(os.path.join("templates", selected_template)).convert('RGB')
                 
-                # Coordinate attuali (o default se non esistono)
                 if selected_template in TEMPLATE_MAPS:
                     template_data = TEMPLATE_MAPS[selected_template]
                     px, py, pw, ph = template_data["coords"]
                     saved_offset = template_data.get("offset", 1)
-                    st.success(f"✅ Template già calibrato - Metodo: PRECISION | Offset salvato: {saved_offset}px")
+                    st.success(f"✅ Template calibrato - PRECISION | Offset: {saved_offset}px")
                 else:
-                    # Valori di default ragionevoli
                     px, py, pw, ph = 20.0, 10.0, 60.0, 80.0
                     saved_offset = 1
-                    st.warning(f"⚠️ Template NON calibrato - Usa il metodo automatico. Imposta coordinate per usare PRECISION.")
+                    st.warning(f"⚠️ Template NON calibrato - metodo automatico")
                 
-                st.subheader("Coordinate Salvate sul Server")
+                st.subheader("Coordinate Salvate")
                 col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
                     st.metric("X (%)", f"{px:.1f}")
@@ -450,51 +446,47 @@ elif menu == "🎯 Calibrazione Coordinate":
                 
                 st.divider()
                 
-                # Initialize session state per i valori se non esistono
-                if 'cal_px' not in st.session_state:
+                # Initialize session state
+                if 'cal_px' not in st.session_state or st.session_state.get('current_template') != selected_template:
                     st.session_state.cal_px = px
-                if 'cal_py' not in st.session_state:
                     st.session_state.cal_py = py
-                if 'cal_pw' not in st.session_state:
                     st.session_state.cal_pw = pw
-                if 'cal_ph' not in st.session_state:
                     st.session_state.cal_ph = ph
-                if 'cal_offset' not in st.session_state:
                     st.session_state.cal_offset = saved_offset
-                if 'test_image' not in st.session_state:
                     st.session_state.test_image = None
+                    st.session_state.current_template = selected_template
                 
-                # Carica immagine di test PRIMA dei controlli
-                st.subheader("📸 Immagine di Test con Multiply Blend")
+                # Carica immagine di test
+                st.subheader("📸 Immagine di Test")
                 col_upload, col_remove = st.columns([3, 1])
                 with col_upload:
-                    test_upload = st.file_uploader("Carica un'immagine per vedere l'anteprima BLENDED in tempo reale", type=['jpg', 'jpeg', 'png'], key='test_img_upload')
+                    test_upload = st.file_uploader("Carica immagine per anteprima BLENDED in tempo reale", type=['jpg', 'jpeg', 'png'], key='test_img_upload')
                     if test_upload:
                         st.session_state.test_image = Image.open(test_upload)
                 
                 with col_remove:
                     if st.session_state.test_image is not None:
-                        if st.button("🗑️ Rimuovi Immagine"):
+                        if st.button("🗑️ Rimuovi"):
                             st.session_state.test_image = None
                             st.rerun()
                 
                 st.divider()
                 
-                # Layout a due colonne: controlli a sinistra, anteprima a destra
+                # Layout a due colonne
                 col_controls, col_preview = st.columns([1, 1])
                 
                 with col_controls:
                     st.subheader("🎚️ Controlli")
                     
-                    # Controlli X Position
+                    # X Position
                     st.write("**X Position (%)**")
                     col_x = st.columns([1, 1, 6, 1])
                     with col_x[0]:
-                        if st.button("−", key="x_minus", help="Decrementa X di 0.1%"):
+                        if st.button("−", key="x_minus"):
                             st.session_state.cal_px = max(0.0, st.session_state.cal_px - 0.1)
                             st.rerun()
                     with col_x[1]:
-                        if st.button("+", key="x_plus", help="Incrementa X di 0.1%"):
+                        if st.button("+", key="x_plus"):
                             st.session_state.cal_px = min(100.0, st.session_state.cal_px + 0.1)
                             st.rerun()
                     with col_x[2]:
@@ -503,15 +495,15 @@ elif menu == "🎯 Calibrazione Coordinate":
                     with col_x[3]:
                         st.code(f"{st.session_state.cal_px:.1f}")
                     
-                    # Controlli Y Position
+                    # Y Position
                     st.write("**Y Position (%)**")
                     col_y = st.columns([1, 1, 6, 1])
                     with col_y[0]:
-                        if st.button("−", key="y_minus", help="Decrementa Y di 0.1%"):
+                        if st.button("−", key="y_minus"):
                             st.session_state.cal_py = max(0.0, st.session_state.cal_py - 0.1)
                             st.rerun()
                     with col_y[1]:
-                        if st.button("+", key="y_plus", help="Incrementa Y di 0.1%"):
+                        if st.button("+", key="y_plus"):
                             st.session_state.cal_py = min(100.0, st.session_state.cal_py + 0.1)
                             st.rerun()
                     with col_y[2]:
@@ -520,15 +512,15 @@ elif menu == "🎯 Calibrazione Coordinate":
                     with col_y[3]:
                         st.code(f"{st.session_state.cal_py:.1f}")
                     
-                    # Controlli Width
+                    # Width
                     st.write("**Width (%)**")
                     col_w = st.columns([1, 1, 6, 1])
                     with col_w[0]:
-                        if st.button("−", key="w_minus", help="Decrementa Width di 0.1%"):
+                        if st.button("−", key="w_minus"):
                             st.session_state.cal_pw = max(1.0, st.session_state.cal_pw - 0.1)
                             st.rerun()
                     with col_w[1]:
-                        if st.button("+", key="w_plus", help="Incrementa Width di 0.1%"):
+                        if st.button("+", key="w_plus"):
                             st.session_state.cal_pw = min(100.0, st.session_state.cal_pw + 0.1)
                             st.rerun()
                     with col_w[2]:
@@ -537,15 +529,15 @@ elif menu == "🎯 Calibrazione Coordinate":
                     with col_w[3]:
                         st.code(f"{st.session_state.cal_pw:.1f}")
                     
-                    # Controlli Height
+                    # Height
                     st.write("**Height (%)**")
                     col_h = st.columns([1, 1, 6, 1])
                     with col_h[0]:
-                        if st.button("−", key="h_minus", help="Decrementa Height di 0.1%"):
+                        if st.button("−", key="h_minus"):
                             st.session_state.cal_ph = max(1.0, st.session_state.cal_ph - 0.1)
                             st.rerun()
                     with col_h[1]:
-                        if st.button("+", key="h_plus", help="Incrementa Height di 0.1%"):
+                        if st.button("+", key="h_plus"):
                             st.session_state.cal_ph = min(100.0, st.session_state.cal_ph + 0.1)
                             st.rerun()
                     with col_h[2]:
@@ -556,15 +548,15 @@ elif menu == "🎯 Calibrazione Coordinate":
                     
                     st.divider()
                     
-                    # Controlli Offset bordi
+                    # Offset
                     st.write("**Border Offset (px)**")
                     col_off = st.columns([1, 1, 6, 1])
                     with col_off[0]:
-                        if st.button("−", key="off_minus", help="Decrementa offset di 1px"):
+                        if st.button("−", key="off_minus"):
                             st.session_state.cal_offset = max(0, st.session_state.cal_offset - 1)
                             st.rerun()
                     with col_off[1]:
-                        if st.button("+", key="off_plus", help="Incrementa offset di 1px"):
+                        if st.button("+", key="off_plus"):
                             st.session_state.cal_offset = min(20, st.session_state.cal_offset + 1)
                             st.rerun()
                     with col_off[2]:
@@ -577,7 +569,6 @@ elif menu == "🎯 Calibrazione Coordinate":
                     st.subheader("👁️ Anteprima Live")
                     
                     if st.session_state.test_image is not None:
-                        # Mostra l'anteprima con l'immagine di test BLENDED
                         preview_img = apply_test_image_blended(
                             template_img, 
                             st.session_state.test_image,
@@ -587,37 +578,45 @@ elif menu == "🎯 Calibrazione Coordinate":
                             st.session_state.cal_ph,
                             st.session_state.cal_offset
                         )
-                        st.image(preview_img, caption=f"Anteprima BLENDED (Offset: {st.session_state.cal_offset}px)", use_column_width=True)
+                        st.image(preview_img, caption=f"Anteprima (Offset: {st.session_state.cal_offset}px)", use_column_width=True)
                     else:
-                        st.info("⬆️ Carica un'immagine di test sopra per vedere l'anteprima in tempo reale")
+                        st.info("⬆️ Carica un'immagine di test")
                         st.image(template_img, caption="Template originale", use_column_width=True)
                 
                 st.divider()
                 
                 # Pulsanti di azione
-                col_save, col_remove = st.columns(2)
+                col_save, col_download, col_remove = st.columns(3)
                 with col_save:
-                    if st.button("💾 SALVA COORDINATE E OFFSET SUL SERVER", type="primary"):
+                    if st.button("💾 SALVA COORDINATE", type="primary"):
                         TEMPLATE_MAPS[selected_template] = {
                             "coords": (st.session_state.cal_px, st.session_state.cal_py, 
                                       st.session_state.cal_pw, st.session_state.cal_ph),
                             "offset": st.session_state.cal_offset
                         }
                         save_template_maps(TEMPLATE_MAPS)
-                        st.success(f"✅ Coordinate E OFFSET salvati PERMANENTEMENTE per {selected_template}!")
-                        st.info(f"Coordinate: X={st.session_state.cal_px:.1f}%, Y={st.session_state.cal_py:.1f}%, W={st.session_state.cal_pw:.1f}%, H={st.session_state.cal_ph:.1f}%")
-                        st.info(f"Offset: {st.session_state.cal_offset}px")
+                        st.success(f"✅ Salvato!")
                         st.balloons()
+                
+                with col_download:
+                    # Pulsante per scaricare il JSON
+                    json_data = json.dumps(TEMPLATE_MAPS, indent=2)
+                    st.download_button(
+                        label="📥 SCARICA JSON",
+                        data=json_data,
+                        file_name="template_coordinates.json",
+                        mime="application/json"
+                    )
                 
                 with col_remove:
                     if selected_template in TEMPLATE_MAPS:
-                        if st.button("🗑️ RIMUOVI CALIBRAZIONE"):
+                        if st.button("🗑️ RIMUOVI"):
                             del TEMPLATE_MAPS[selected_template]
                             save_template_maps(TEMPLATE_MAPS)
-                            st.success("✅ Calibrazione rimossa! Il template userà il metodo automatico.")
+                            st.success("✅ Rimosso!")
                             st.rerun()
         else:
-            st.info(f"Nessun template trovato nella categoria {cat_choice}")
+            st.info(f"Nessun template in {cat_choice}")
 
 elif menu == "⚡ Produzione":
     st.subheader("⚡ Produzione")
@@ -626,26 +625,26 @@ elif menu == "⚡ Produzione":
     with col_sel:
         scelta = st.radio("Seleziona formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
     with col_del:
-        if st.button("🗑️ SVUOTA DESIGN"):
+        if st.button("🗑️ SVUOTA"):
             st.session_state.uploader_key += 1
             st.rerun()
 
-    # --- ANTEPRIMA PER IL FORMATO SELEZIONATO ---
-    st.subheader(f"🔍 Anteprima Design per formato {scelta}")
+    # Anteprima
+    st.subheader(f"🔍 Anteprima {scelta}")
     preview_design = st.file_uploader(
-        f"Carica un design per vedere l'anteprima su tutti i template {scelta}", 
+        f"Carica design per anteprima", 
         type=['jpg', 'jpeg', 'png'],
         key='preview_uploader'
     )
 
     if preview_design:
         d_img = Image.open(preview_design)
-        st.info(f"Design caricato: {preview_design.name}")
+        st.info(f"Design: {preview_design.name}")
         
         target_tmpls = libreria[scelta]
         
         if not target_tmpls:
-            st.warning(f"Nessun template {scelta} disponibile.")
+            st.warning(f"Nessun template {scelta}")
         else:
             cols = st.columns(4)
             for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
@@ -653,19 +652,18 @@ elif menu == "⚡ Produzione":
                     with st.spinner(f"Generando {t_name}..."):
                         result = composite_v3_fixed(t_img, d_img, t_name)
                         if result:
-                            # Mostra badge se usa PRECISION
                             if t_name in TEMPLATE_MAPS:
                                 offset_used = TEMPLATE_MAPS[t_name].get("offset", 1)
-                                st.caption(f"🎯 PRECISION (offset: {offset_used}px)")
+                                st.caption(f"🎯 PRECISION ({offset_used}px)")
                             st.image(result, caption=t_name, use_column_width=True)
                         else:
                             st.error(f"Errore: {t_name}")
         
         st.divider()
 
-    # --- CARICAMENTO MULTIPLO PER PRODUZIONE ---
+    # Produzione batch
     disegni = st.file_uploader(
-        f"Carica design {scelta} per produzione batch", 
+        f"Carica design {scelta} per batch", 
         accept_multiple_files=True, 
         key=f"up_{st.session_state.uploader_key}"
     )
