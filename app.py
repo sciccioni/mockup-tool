@@ -64,7 +64,17 @@ def composite_v4_smart(tmpl_pil, cover_pil, template_name=""):
         cover_final = cover_res[bleed:bleed+target_h, bleed:bleed+target_w]
         
         result = np.stack([tmpl_gray]*3, axis=2)
-        book_ratio = np.minimum(tmpl_gray[by1:by2+1, bx1:bx2+1] / face_val, 1.0)
+        book_region = tmpl_gray[by1:by2+1, bx1:bx2+1]
+        
+        # FIX: Verifica che le dimensioni combacino
+        if book_region.shape[0] != cover_final.shape[0] or book_region.shape[1] != cover_final.shape[1]:
+            # Resize cover_final per matchare book_region
+            from PIL import Image as PILImage
+            cover_final_pil = PILImage.fromarray(cover_final.astype(np.uint8))
+            cover_final_pil = cover_final_pil.resize((book_region.shape[1], book_region.shape[0]), PILImage.LANCZOS)
+            cover_final = np.array(cover_final_pil).astype(np.float64)
+        
+        book_ratio = np.minimum(book_region / face_val, 1.0)
         
         for c in range(3):
             result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
