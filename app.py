@@ -1,202 +1,150 @@
 import streamlit as st
 import numpy as np
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image
 import os
-import io
-import zipfile
+import json
 
-# --- CONFIGURAZIONE ---
-st.set_page_config(page_title="PhotoBook Mockup - Smart Fit V4", layout="wide")
+st.set_page_config(page_title="Template Coordinate Finder", layout="wide")
 
-if 'uploader_key' not in st.session_state:
-    st.session_state.uploader_key = 0
+st.title("🔍 Template Coordinate Finder")
+st.write("Questo tool analizza tutti i template e ti dà le coordinate da usare")
 
-# --- COORDINATE FISSE PER TEMPLATE ---
-# Formato: (x1, y1, x2, y2, face_value, bleed)
-TEMPLATE_COORDS = {
-    "base_copertina_verticale.jpg": (100, 80, 900, 1200, 246, 15),
-    "base_verticale_temi_app.jpg": (150, 100, 850, 1150, 246, 15),
-    "base_bottom_app.jpg": (120, 90, 880, 1180, 246, 15),
-    "base_copertina_orizzontale.jpg": (80, 100, 1200, 900, 246, 15),
-    "base_orizzontale_temi_app.jpg": (100, 120, 1180, 880, 246, 15),
-    "base_quadrata_temi_app.jpg": (100, 100, 1000, 1000, 246, 15),
-}
-
-# --- SMISTAMENTO CATEGORIE ---
-def get_manual_cat(filename):
-    fn = filename.lower()
-    if any(x in fn for x in ["base_copertina_verticale", "base_verticale_temi_app", "base_bottom_app"]): return "Verticali"
-    if any(x in fn for x in ["base_copertina_orizzontale", "base_orizzontale_temi_app"]): return "Orizzontali"
-    if "base_quadrata_temi_app" in fn: return "Quadrati"
-    if any(x in fn for x in ["15x22", "20x30"]): return "Verticali"
-    if any(x in fn for x in ["20x15", "27x20", "32x24", "40x30"]): return "Orizzontali"
-    if any(x in fn for x in ["20x20", "30x30"]): return "Quadrati"
-    return "Altro"
-
-# --- LOGICA CORE CON COORDINATE FISSE ---
-def composite_v4_fixed(tmpl_pil, cover_pil, template_name=""):
-    # 1. SFOCATURA 1PX
-    cover_pil = cover_pil.convert('RGB').filter(ImageFilter.GaussianBlur(radius=1))
-    
-    # Cerca coordinate fisse
-    coords = None
-    for key, values in TEMPLATE_COORDS.items():
-        if key.lower() in template_name.lower():
-            coords = values
-            break
-    
-    # Se non trova coordinate fisse, usa il metodo automatico (fallback)
-    if coords is None:
-        return composite_v4_auto(tmpl_pil, cover_pil, template_name)
-    
-    bx1, by1, bx2, by2, face_val, bleed = coords
-    
+def find_book_region_auto(tmpl_pil):
+    """Trova automaticamente la regione del libro"""
     tmpl = np.array(tmpl_pil).astype(np.float64)
     tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2]) if tmpl.ndim == 3 else tmpl
     h, w = tmpl_gray.shape
     
-    # Verifica che le coordinate siano valide per questo template
-    if bx2 >= w or by2 >= h:
-        st.warning(f"⚠️ Coordinate invalide per {template_name} (template: {w}x{h})")
-        return composite_v4_auto(tmpl_pil, cover_pil, template_name)
-    
-    target_w = bx2 - bx1 + 1
-    target_h = by2 - by1 + 1
-    
-    # --- SMART FIT ---
-    full_w, full_h = target_w + bleed*2, target_h + bleed*2
-    cover_fitted = ImageOps.fit(cover_pil, (full_w, full_h), method=Image.LANCZOS, centering=(0.5, 0.5))
-    cover_res = np.array(cover_fitted).astype(np.float64)
-    
-    cover_final = cover_res[bleed:bleed+target_h, bleed:bleed+target_w]
-    
-    # VERIFICA DIMENSIONI
-    if cover_final.shape[0] != target_h or cover_final.shape[1] != target_w:
-        st.error(f"Mismatch dimensioni: cover_final={cover_final.shape}, target={target_h}x{target_w}")
-        return None
-    
-    result = np.stack([tmpl_gray]*3, axis=2)
-    
-    # Estrai la region del libro dal template
-    book_region = tmpl_gray[by1:by2+1, bx1:bx2+1]
-    
-    # VERIFICA COMPATIBILITA'
-    if book_region.shape[0] != cover_final.shape[0] or book_region.shape[1] != cover_final.shape[1]:
-        st.error(f"Shape mismatch: book_region={book_region.shape}, cover_final={cover_final.shape[:2]}")
-        return None
-    
-    book_ratio = np.minimum(book_region / face_val, 1.0)
-    
-    for c in range(3):
-        result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
-            
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
-
-# --- METODO AUTOMATICO (FALLBACK) ---
-def composite_v4_auto(tmpl_pil, cover_pil, template_name=""):
-    cover_pil = cover_pil.convert('RGB').filter(ImageFilter.GaussianBlur(radius=1))
-    
-    tmpl = np.array(tmpl_pil).astype(np.float64)
-    tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2]) if tmpl.ndim == 3 else tmpl
-    h, w = tmpl_gray.shape
-    
-    corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
+    # Calcola background
+    corners = [tmpl_gray[3,3], tmpl_gray[3,w-4], tmpl_gray[h-4,3], tmpl_gray[h-4,w-4]]
     bg_val = float(np.median(corners))
     
-    book_mask = tmpl_gray > (bg_val + 5)
+    # Trova la maschera del libro
+    threshold = max(5, bg_val * 0.05)
+    book_mask = tmpl_gray > (bg_val + threshold)
+    
     rows = np.any(book_mask, axis=1)
     cols = np.any(book_mask, axis=0)
     
-    if not rows.any() or not cols.any(): 
+    if not rows.any() or not cols.any():
         return None
     
     by1, by2 = np.where(rows)[0][[0, -1]]
     bx1, bx2 = np.where(cols)[0][[0, -1]]
     
-    target_w, target_h = bx2 - bx1 + 1, by2 - by1 + 1
-    bleed = 15
+    # Trova il bordo della copertina (zona bianca)
+    mid_y = (by1 + by2) // 2
+    row = tmpl_gray[mid_y]
+    face_x1 = bx1
     
-    full_w, full_h = target_w + bleed*2, target_h + bleed*2
-    cover_fitted = ImageOps.fit(cover_pil, (full_w, full_h), method=Image.LANCZOS, centering=(0.5, 0.5))
-    cover_res = np.array(cover_fitted).astype(np.float64)
+    for x in range(bx1, min(bx2 - 5, bx1 + (bx2-bx1)//2)):
+        if np.all(row[x:x + 5] >= 235):
+            face_x1 = x
+            break
     
-    cover_final = cover_res[bleed:bleed+target_h, bleed:bleed+target_w]
+    # Calcola face_val
+    margin = min(30, (by2-by1)//10, (bx2-face_x1)//10)
+    face_area = tmpl_gray[by1+margin:by2-margin, face_x1+margin:bx2-margin]
+    face_val = float(np.median(face_area)) if face_area.size > 0 else 246.0
     
-    result = np.stack([tmpl_gray]*3, axis=2)
-    book_region = tmpl_gray[by1:by2+1, bx1:bx2+1]
-    book_ratio = np.minimum(book_region / 246.0, 1.0)
+    return {
+        'bx1': int(face_x1),  # Usa face_x1 come inizio X
+        'by1': int(by1),
+        'bx2': int(bx2),
+        'by2': int(by2),
+        'face_val': round(face_val, 1),
+        'bg_val': round(bg_val, 1),
+        'width': int(bx2 - face_x1 + 1),
+        'height': int(by2 - by1 + 1)
+    }
+
+def visualize_region(img_pil, coords):
+    """Disegna un rettangolo sulla regione trovata"""
+    from PIL import ImageDraw
+    img_copy = img_pil.copy()
+    draw = ImageDraw.Draw(img_copy)
     
-    for c in range(3):
-        result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
+    # Disegna rettangolo rosso
+    draw.rectangle(
+        [coords['bx1'], coords['by1'], coords['bx2'], coords['by2']], 
+        outline='red', 
+        width=3
+    )
+    
+    return img_copy
+
+# Carica template
+if os.path.exists("templates"):
+    template_files = [f for f in os.listdir("templates") if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    
+    if template_files:
+        st.success(f"✅ Trovati {len(template_files)} template")
+        
+        all_coords = {}
+        
+        for tmpl_file in sorted(template_files):
+            tmpl_path = os.path.join("templates", tmpl_file)
+            tmpl_img = Image.open(tmpl_path).convert('RGB')
             
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
-
-# --- CARICAMENTO ---
-@st.cache_data
-def load_templates():
-    lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
-    if not os.path.exists("templates"): return lib
-    for f in os.listdir("templates"):
-        if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-            cat = get_manual_cat(f)
-            if cat in lib: lib[cat][f] = Image.open(os.path.join("templates", f)).convert('RGB')
-    return lib
-
-libreria = load_templates()
-
-# --- DEBUG HELPER ---
-if st.sidebar.checkbox("🔍 Mostra dimensioni template"):
-    for cat in ["Verticali", "Orizzontali", "Quadrati"]:
-        st.sidebar.write(f"**{cat}:**")
-        for t_name, t_img in libreria[cat].items():
-            st.sidebar.write(f"  • {t_name}: {t_img.size[0]}x{t_img.size[1]}")
-
-# --- INTERFACCIA ---
-st.title("🚀 Mockup Engine - Fixed Coordinates V2")
-
-col1, col2 = st.columns([2, 1])
-with col1:
-    scelta = st.radio("Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-with col2:
-    if st.button("🗑️ Reset"):
-        st.session_state.uploader_key += 1
-        st.rerun()
-
-disegni = st.file_uploader("Carica design", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
-
-if st.button("🔥 GENERA E MOSTRA ANTEPRIME"):
-    if not disegni or not libreria[scelta]:
-        st.error("Mancano file o template!")
+            st.markdown(f"---")
+            st.subheader(f"📄 {tmpl_file}")
+            
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.write(f"**Dimensioni template:** {tmpl_img.size[0]} x {tmpl_img.size[1]} px")
+                
+                coords = find_book_region_auto(tmpl_img)
+                
+                if coords:
+                    st.json(coords)
+                    
+                    # Determina bleed
+                    is_base = any(x in tmpl_file.lower() for x in ["base_copertina", "temi_app", "base_bottom"])
+                    bleed = 15 if is_base else 12
+                    
+                    # Salva per export
+                    all_coords[tmpl_file] = {
+                        'coords': (coords['bx1'], coords['by1'], coords['bx2'], coords['by2']),
+                        'face_val': coords['face_val'],
+                        'bleed': bleed
+                    }
+                    
+                    st.info(f"**Bleed suggerito:** {bleed}px")
+                    st.code(f'"{tmpl_file}": ({coords["bx1"]}, {coords["by1"]}, {coords["bx2"]}, {coords["by2"]}, {coords["face_val"]}, {bleed}),')
+                else:
+                    st.error("❌ Impossibile trovare la regione del libro")
+            
+            with col2:
+                if coords:
+                    visualized = visualize_region(tmpl_img, coords)
+                    st.image(visualized, caption="Regione rilevata (rettangolo rosso)", use_container_width=True)
+                else:
+                    st.image(tmpl_img, use_container_width=True)
+        
+        # Export finale
+        st.markdown("---")
+        st.subheader("📋 Codice da copiare nel tuo app.py")
+        
+        code_output = "TEMPLATE_COORDS = {\n"
+        for tmpl_file, data in all_coords.items():
+            bx1, by1, bx2, by2 = data['coords']
+            face_val = data['face_val']
+            bleed = data['bleed']
+            code_output += f'    "{tmpl_file}": ({bx1}, {by1}, {bx2}, {by2}, {face_val}, {bleed}),\n'
+        code_output += "}"
+        
+        st.code(code_output, language='python')
+        
+        # Download JSON
+        json_output = json.dumps(all_coords, indent=2)
+        st.download_button(
+            "💾 Scarica coordinate in JSON",
+            json_output,
+            "template_coordinates.json",
+            "application/json"
+        )
     else:
-        target_tmpls = libreria[scelta]
-        first_d = Image.open(disegni[0])
-        
-        st.subheader(f"🖼️ Anteprima: {disegni[0].name}")
-        cols = st.columns(4)
-        for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
-            prev = composite_v4_fixed(t_img, first_d, t_name)
-            if prev:
-                cols[idx % 4].image(prev, caption=t_name, use_column_width=True)
-            else:
-                cols[idx % 4].error(f"❌ {t_name}")
-
-        # --- GENERAZIONE ZIP ---
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zip_f:
-            bar = st.progress(0)
-            total = len(disegni) * len(target_tmpls)
-            done = 0
-            for d_file in disegni:
-                d_img = Image.open(d_file)
-                d_name = os.path.splitext(d_file.name)[0]
-                for t_name, t_img in target_tmpls.items():
-                    res = composite_v4_fixed(t_img, d_img, t_name)
-                    if res:
-                        buf = io.BytesIO()
-                        res.save(buf, format='JPEG', quality=95)
-                        zip_f.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
-                    done += 1
-                    bar.progress(done / total)
-        
-        st.success("Completato!")
-        st.download_button("📥 SCARICA ZIP", zip_buf.getvalue(), f"Mockups_{scelta}.zip")
+        st.warning("⚠️ Nessun template trovato nella cartella 'templates'")
+else:
+    st.error("❌ Cartella 'templates' non trovata")
