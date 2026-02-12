@@ -93,9 +93,49 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     target_w = bx2 - bx1 + 1
     target_h = by2 - by1 + 1
     
+    # --- LOGICA SPECIALE PER TEMPLATE TEMI_APP ---
+    if "temi_app" in template_name.lower():
+        # Template temi_app: hanno ombre scure che NON vanno coperte
+        # Trova solo l'area bianca del libro
+        
+        # Uso threshold alto per trovare solo pixel molto bianchi
+        white_mask = tmpl_gray > 230
+        
+        rows = np.any(white_mask, axis=1)
+        cols = np.any(white_mask, axis=0)
+        
+        if not rows.any() or not cols.any():
+            # Fallback alla logica normale se non trova niente
+            return None
+        
+        app_by1, app_by2 = np.where(rows)[0][[0, -1]]
+        app_bx1, app_bx2 = np.where(cols)[0][[0, -1]]
+        
+        app_w = app_bx2 - app_bx1 + 1
+        app_h = app_by2 - app_by1 + 1
+        
+        bleed = 15
+        
+        cover_big = np.array(
+            Image.fromarray(cover.astype(np.uint8)).resize(
+                (app_w + bleed*2, app_h + bleed*2), Image.LANCZOS
+            )
+        ).astype(np.float64)
+        
+        cover_final = cover_big[bleed:bleed+app_h, bleed:bleed+app_w]
+        
+        result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
+        
+        book_tmpl = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
+        book_ratio = np.minimum(book_tmpl / 246.0, 1.0)
+        
+        for c in range(3):
+            result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * book_ratio
+            
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+    
     # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
-    if ("base_copertina" in template_name.lower() or 
-        "temi_app" in template_name.lower()):
+    if "base_copertina" in template_name.lower():
         # Template base: IGNORO la rilevazione automatica e copro TUTTO
         # Trovo MANUALMENTE i bordi REALI del libro senza fidarmi dell'algoritmo
         
