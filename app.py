@@ -5,15 +5,13 @@ import os
 import io
 import zipfile
 
-# --- 1. SETUP E COORDINATE DEFINITIVE ---
-st.set_page_config(page_title="PhotoBook Master Pro V5.5", layout="wide")
+# --- 1. CONFIGURAZIONE E COORDINATE SALVATE ---
+st.set_page_config(page_title="PhotoBook Master V5.6", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
-        # Template Piatti (100% statici, NO BLENDING)
         "base_copertina_verticale.jpg": [0.0, 0.0, 100.0, 100.0],
         "base_copertina_orizzontale.jpg": [0.0, 0.0, 100.0, 100.0],
-        # Template App (Coordinate calibrate, SI BLENDING)
         "base_verticale_temi_app.jpg": [34.6, 9.2, 30.2, 80.3],
         "base_bottom_app.jpg": [21.9, 4.9, 56.5, 91.3],
         "base_orizzontale_temi_app.jpg": [18.9, 9.4, 61.8, 83.0],
@@ -24,8 +22,9 @@ if 'coords' not in st.session_state:
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- 2. FUNZIONI TECNICHE ---
+# --- 2. FUNZIONI TECNICHE DI RENDERING ---
 def get_feathered_mask(size, blur_radius):
+    """Crea la maschera per sfumare i bordi."""
     mask = Image.new("L", size, 255)
     if blur_radius > 0:
         draw = ImageDraw.Draw(mask)
@@ -35,46 +34,45 @@ def get_feathered_mask(size, blur_radius):
     return mask
 
 def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
+    """Motore di fusione: gestisce ombre (blending) e bordi morbidi."""
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
     h, w, _ = tmpl_rgb.shape
     
-    is_static_cover = False
-    
+    # Recupero coordinate
     if t_name in st.session_state.coords:
         px, py, pw, ph = st.session_state.coords[t_name]
         x1, y1 = int((px * w) / 100), int((py * h) / 100)
         tw, th = int((pw * w) / 100), int((ph * h) / 100)
         face_val = 255.0
-        # CONTROLLO CRITICO: Se è esattamente 0,0,100,100 diventa statico (no ombre)
-        if px == 0.0 and py == 0.0 and pw == 100.0 and ph == 100.0:
-            is_static_cover = True
     else:
-        # Fallback automatico
+        # Fallback automatico se non mappato
         corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
         bg_val = np.median(corners)
         book_mask = tmpl_gray > (bg_val + 3)
-        coords = np.argwhere(book_mask)
-        if coords.size == 0: return None
-        y1, x1 = coords.min(axis=0)
-        y2, x2 = coords.max(axis=0)
+        coords_idx = np.argwhere(book_mask)
+        if coords_idx.size == 0: return None
+        y1, x1 = coords_idx.min(axis=0)
+        y2, x2 = coords_idx.max(axis=0)
         tw, th = x2 - x1 + 1, y2 - y1 + 1
         face_val = 246.0
 
+    # Resize cover
     cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
+    
+    # Shadow Map (Blending Multiply)
+    shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / face_val, 0.0, 1.0)
+    shadow_map = np.expand_dims(shadow_map, axis=2)
+
+    # Maschera sfocatura
     f_mask = get_feathered_mask((tw, th), blur_rad)
     alpha = np.array(f_mask).astype(np.float64) / 255.0
     alpha = np.expand_dims(alpha, axis=2)
 
-    if is_static_cover:
-        shadow_map = np.ones((th, tw, 1), dtype=np.float64)
-    else:
-        # Blending attivo
-        shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / face_val, 0.0, 1.0)
-        shadow_map = np.expand_dims(shadow_map, axis=2)
-
+    # Fusione: (Cover * Ombre) applicata tramite Maschera su Sfondo Originale
     orig_area = tmpl_rgb[y1:y1+th, x1:x1+tw]
-    blended = ((cover_res * shadow_map) * alpha) + (orig_area * (1 - alpha))
+    cover_with_shadows = cover_res * shadow_map
+    blended = (cover_with_shadows * alpha) + (orig_area * (1 - alpha))
     
     result = tmpl_rgb.copy()
     result[y1:y1+th, x1:x1+tw] = blended
@@ -88,28 +86,28 @@ def get_manual_cat(filename):
     return "Altro"
 
 @st.cache_data(show_spinner=False)
-def load_lib():
+def load_library():
     path = "templates"
+    if not os.path.exists(path): os.makedirs(path)
     lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}, "Altro": {}, "Tutti": {}}
-    if os.path.exists(path):
-        for f in os.listdir(path):
-            if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-                img = Image.open(os.path.join(path, f))
-                lib["Tutti"][f] = img
-                cat = get_manual_cat(f)
-                lib[cat][f] = img
+    for f in os.listdir(path):
+        if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+            img = Image.open(os.path.join(path, f))
+            lib["Tutti"][f] = img
+            cat = get_manual_cat(f)
+            lib[cat][f] = img
     return lib
 
-libreria = load_lib()
+libreria = load_library()
 
 # --- 3. INTERFACCIA ---
-st.title("📖 PhotoBook Master V5.5")
+st.title("📖 PhotoBook Master V5.6")
 
 with st.sidebar:
-    st.header("📊 Stato Libreria")
+    st.header("📊 Stato Template")
     for cat in ["Verticali", "Orizzontali", "Quadrati", "Altro"]:
-        st.write(f"{cat}: **{len(libreria[cat])}** template")
-    if st.button("🔄 Aggiorna"):
+        st.write(f"{cat}: **{len(libreria[cat])}**")
+    if st.button("🔄 Ricarica Cartella"):
         st.cache_data.clear()
         st.rerun()
 
@@ -119,16 +117,17 @@ tab_prod, tab_sett = st.tabs(["🚀 PRODUZIONE BATCH", "⚙️ IMPOSTAZIONI TEMP
 with tab_prod:
     c_ctrl, c_up = st.columns([1, 2])
     with c_ctrl:
-        formato = st.radio("Categoria:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-        blur_val = st.slider("Morbidezza (px):", 0.0, 15.0, 5.0, 0.5, key="blur_prod")
-        if st.button("🗑️ SVUOTA TUTTO"):
+        formato = st.radio("Seleziona Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+        blur_val = st.slider("Sfocatura Bordi (px):", 0.0, 15.0, 5.0, 0.5)
+        if st.button("🗑️ CANCELLA TUTTO"):
             st.session_state.uploader_key += 1
             st.rerun()
+    
     with c_up:
-        disegni = st.file_uploader("Carica design:", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
+        disegni = st.file_uploader("Carica le tue copertine:", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
 
     if disegni and libreria[formato]:
-        if st.button("🚀 GENERA ZIP"):
+        if st.button("🚀 GENERA E SCARICA ZIP"):
             zip_io = io.BytesIO()
             with zipfile.ZipFile(zip_io, "a") as zf:
                 bar = st.progress(0)
@@ -146,31 +145,33 @@ with tab_prod:
                             zf.writestr(f"{d_fn}/{t_name}.jpg", buf.getvalue())
                         curr += 1
                         bar.progress(curr/total)
-            st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), "Mockups.zip")
-        
+            st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), "Mockups_Batch.zip")
+
+        # Anteprima
         t_pre = list(libreria[formato].keys())[0]
         st.image(process_mockup(libreria[formato][t_pre], Image.open(disegni[-1]), t_pre, blur_val), use_column_width=True)
 
 # --- TAB IMPOSTAZIONI ---
 with tab_sett:
-    st.subheader("⚙️ Calibrazione Coordinate")
-    c_sel, c_in = st.columns([1, 1])
-    with c_sel:
+    st.subheader("🛠️ Calibrazione Coordinate e Blending")
+    col_sel, col_in = st.columns([1, 1])
+    
+    with col_sel:
         t_mod = st.selectbox("Template da regolare:", list(libreria["Tutti"].keys()))
-        t_cov = st.file_uploader("Cover test:", type=['jpg', 'png'], key="cov_test")
-        blur_test = st.slider("Test Morbidezza (px):", 0.0, 15.0, 5.0, 0.5, key="blur_sett")
-    with c_in:
-        # FIX: Inizializza con margini per non attivare la modalità statica
-        if t_mod not in st.session_state.coords: 
-            st.session_state.coords[t_mod] = [5.0, 5.0, 90.0, 90.0] 
-            
+        t_cov = st.file_uploader("Cover di test:", type=['jpg', 'png'], key="cov_test")
+        blur_test = st.slider("Test Sfocatura (px):", 0.0, 15.0, 5.0, 0.5, key="blur_sett")
+        
+    with col_in:
+        if t_mod not in st.session_state.coords:
+            st.session_state.coords[t_mod] = [5.0, 5.0, 90.0, 90.0]
+        
         c1, c2 = st.columns(2)
         st.session_state.coords[t_mod][0] = c1.number_input("X %", value=st.session_state.coords[t_mod][0], step=0.1)
-        st.session_state.coords[t_mod][2] = c1.number_input("W %", value=st.session_state.coords[t_mod][2], step=0.1)
+        st.session_state.coords[t_mod][2] = c1.number_input("Larghezza %", value=st.session_state.coords[t_mod][2], step=0.1)
         st.session_state.coords[t_mod][1] = c2.number_input("Y %", value=st.session_state.coords[t_mod][1], step=0.1)
-        st.session_state.coords[t_mod][3] = c2.number_input("H %", value=st.session_state.coords[t_mod][3], step=0.1)
-        st.warning("Non impostare 0,0,100,100 se vuoi mantenere le ombre!")
+        st.session_state.coords[t_mod][3] = c2.number_input("Altezza %", value=st.session_state.coords[t_mod][3], step=0.1)
         st.code(f"'{t_mod}': {st.session_state.coords[t_mod]},")
+
     if t_cov:
         st.divider()
         st.image(process_mockup(libreria["Tutti"][t_mod], Image.open(t_cov), t_mod, blur_test), use_column_width=True)
