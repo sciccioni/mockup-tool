@@ -1,64 +1,146 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter, ImageDraw
+import os
 import io
+import zipfile
 
-# --- DIZIONARIO COORDINATE (Queste le salverai una volta calibrate) ---
+# --- 1. MAPPA COORDINATE DEFINITIVA ---
+# Ho inserito i valori esatti che mi hai fornito per i template "app"
 TEMPLATE_MAPS = {
-    "base_verticale_temi_app.jpg": (35.1, 10.4, 29.8, 79.2),
-    "base_orizzontale_temi_app.jpg": (19.4, 9.4, 61.2, 81.2),
-    "base_quadrata_temi_app.jpg": (28.2, 10.4, 43.6, 77.4),
-    "base_bottom_app.jpg": (22.8, 4.4, 54.8, 89.6),
+    "base_verticale_temi_app.jpg": (34.6, 9.2, 30.2, 80.3),
+    "base_bottom_app.jpg": (21.9, 4.9, 56.5, 91.3),
+    "base_orizzontale_temi_app.jpg": (18.9, 9.4, 61.8, 83.0),
+    "base_orizzontale_temi_app3.jpg": (18.7, 9.4, 62.2, 82.6),
+    "base_quadrata_temi_app.jpg": (27.8, 10.8, 44.5, 79.0),
+    # Formati Standard (Copertura totale con blending)
+    "base_copertina_verticale.jpg": (0.0, 0.0, 100.0, 100.0),
+    "base_copertina_orizzontale.jpg": (0.0, 0.0, 100.0, 100.0),
+    "15x22-crea la tua grafica.jpg": (0.0, 0.0, 100.0, 100.0),
+    "20x30-crea la tua grafica.jpg": (0.0, 0.0, 100.0, 100.0),
+    "30x30-crea la tua grafica.jpg": (15.0, 15.0, 70.0, 70.0), # Calibrata per non essere un "poster"
 }
 
-def apply_mockup(tmpl_pil, cover_pil, x_pct, y_pct, w_pct, h_pct):
-    tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
-    tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
-    h, w, _ = tmpl_rgb.shape
-    
+# --- 2. LOGICA DI SMISTAMENTO ---
+def get_manual_cat(filename):
+    fn = filename.lower()
+    # VERTICALI
+    if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]):
+        return "Verticali"
+    # ORIZZONTALI
+    if any(x in fn for x in ["orizzontale", "20x15", "27x20", "32x24", "40x30"]):
+        return "Orizzontali"
+    # QUADRATI
+    if any(x in fn for x in ["quadrata", "20x20", "30x30", "quadrato"]):
+        return "Quadrati"
+    return "Altro"
+
+# --- 3. MOTORE DI RENDERING ---
+def apply_mockup(tmpl_pil, cover_pil, coords, blur_rad=5.0):
+    x_pct, y_pct, w_pct, h_pct = coords
+    tmpl_img = tmpl_pil.convert('RGB')
+    w_f, h_f = tmpl_img.size
+
     # Conversione percentuali -> pixel
-    x1, y1 = int((x_pct * w) / 100), int((y_pct * h) / 100)
-    tw, th = int((w_pct * w) / 100), int((h_pct * h) / 100)
+    x1, y1 = int((x_pct * w_f) / 100), int((y_pct * h_f) / 100)
+    tw, th = int((w_pct * w_f) / 100), int((h_pct * h_f) / 100)
     
+    # Protezione dimensioni
+    tw, th = max(1, min(tw, w_f - x1)), max(1, min(th, h_f - y1))
+
     # Resize cover
     cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
     
-    # Shadow Map (Multiply) - Prende le ombre originali del libro
-    book_shadows = tmpl_gray[y1:y1+th, x1:x1+tw]
-    shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
-    
-    result = tmpl_rgb.copy()
-    for c in range(3):
-        result[y1:y1+th, x1:x1+tw, c] = cover_res[:, :, c] * shadow_map
+    # Shadow Map (Multiply)
+    shadow_map = np.array(tmpl_pil.convert('L').crop((x1, y1, x1+tw, y1+th))).astype(np.float64) / 255.0
+    shadow_map = np.expand_dims(shadow_map, axis=2)
+
+    # Maschera sfumatura
+    mask = Image.new("L", (tw, th), 255)
+    if blur_rad > 0:
+        draw = ImageDraw.Draw(mask)
+        draw.rectangle([0, 0, tw, th], outline=0, width=int(blur_rad/2)+1)
+        mask = mask.filter(ImageFilter.GaussianBlur(blur_rad))
+    alpha = np.expand_dims(np.array(mask).astype(np.float64) / 255.0, axis=2)
+
+    # Blending
+    crop_orig = np.array(tmpl_img.crop((x1, y1, x1+tw, y1+th))).astype(np.float64)
+    cover_final = cover_res * shadow_map
+    blended = (cover_final * alpha) + (crop_orig * (1 - alpha))
+
+    result = np.array(tmpl_img).copy()
+    result[y1:y1+th, x1:x1+tw] = np.clip(blended, 0, 255).astype(np.uint8)
+    return Image.fromarray(result)
+
+# --- 4. INTERFACCIA STREAMLIT ---
+st.set_page_config(page_title="PhotoBook Master V7.6", layout="wide")
+st.title("📖 PhotoBook Master V7.6")
+
+# Caricamento Libreria
+@st.cache_data
+def load_library():
+    path = "templates"
+    lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}, "Tutti": {}}
+    if os.path.exists(path):
+        for f in os.listdir(path):
+            if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                img = Image.open(os.path.join(path, f))
+                lib["Tutti"][f] = img
+                cat = get_manual_cat(f)
+                if cat in lib: lib[cat][f] = img
+    return lib
+
+libreria = load_library()
+
+t_prod, t_sett = st.tabs(["🚀 PRODUZIONE BATCH", "⚙️ CALIBRAZIONE"])
+
+with t_prod:
+    col_l, col_r = st.columns([1, 2])
+    with col_l:
+        formato = st.radio("Categoria:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+        sfocatura = st.slider("Sfocatura Bordi:", 0.0, 10.0, 5.0, 0.5)
         
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+    with col_r:
+        disegni = st.file_uploader("Carica le copertine:", accept_multiple_files=True)
 
-st.title("🛠️ Calibratore Mockup Ultra-Preciso")
+    if disegni and libreria[formato]:
+        if st.button("🚀 GENERA E SCARICA ZIP"):
+            z_io = io.BytesIO()
+            with zipfile.ZipFile(z_io, "a") as zf:
+                for d in disegni:
+                    d_img = Image.open(d)
+                    for t_n, t_i in libreria[formato].items():
+                        coords = TEMPLATE_MAPS.get(t_n, (0, 0, 100, 100))
+                        res = apply_mockup(t_i, d_img, coords, sfocatura)
+                        buf = io.BytesIO()
+                        res.save(buf, format='JPEG', quality=95)
+                        zf.writestr(f"{os.path.splitext(d.name)[0]}/{t_n}.jpg", buf.getvalue())
+            st.download_button("📥 SCARICA ZIP", z_io.getvalue(), "Mockups_Batch.zip")
+        
+        # Anteprime Totali (Griglia)
+        st.divider()
+        st.subheader(f"Anteprime per {formato}")
+        grid = st.columns(2)
+        for i, (name, img) in enumerate(libreria[formato].items()):
+            with grid[i % 2]:
+                coords = TEMPLATE_MAPS.get(name, (0, 0, 100, 100))
+                st.image(apply_mockup(img, Image.open(disegni[-1]), coords, sfocatura), caption=name)
 
-st.sidebar.header("⚙️ Regolazione Fine")
-# Seleziona il template per vedere i valori salvati o modificarli
-t_nome = st.sidebar.selectbox("Template da calibrare", list(TEMPLATE_MAPS.keys()))
-default_vals = TEMPLATE_MAPS.get(t_nome, (0, 0, 100, 100))
-
-# SLIDERS PER TROVARE I PUNTI ESATTI
-sc_x = st.sidebar.slider("X (Inizio Orizzontale %)", 0.0, 100.0, default_vals[0], 0.1)
-sc_y = st.sidebar.slider("Y (Inizio Verticale %)", 0.0, 100.0, default_vals[1], 0.1)
-sc_w = st.sidebar.slider("Larghezza (%)", 0.0, 100.0, default_vals[2], 0.1)
-sc_h = st.sidebar.slider("Altezza (%)", 0.0, 100.0, default_vals[3], 0.1)
-
-st.info(f"📍 Coordinate attuali da copiare nel codice: **({sc_x}, {sc_y}, {sc_w}, {sc_h})**")
-
-# Caricamento file per test
-col_t, col_c = st.columns(2)
-with col_t:
-    up_tmpl = st.file_uploader("Carica il Template JPG", type=['jpg', 'jpeg'])
-with col_c:
-    up_cover = st.file_uploader("Carica una Copertina di test", type=['jpg', 'png'])
-
-if up_tmpl and up_cover:
-    img_t = Image.open(up_tmpl)
-    img_c = Image.open(up_cover)
-    
-    # Anteprima in tempo reale
-    result_img = apply_mockup(img_t, img_c, sc_x, sc_y, sc_w, sc_h)
-    st.image(result_img, caption="Anteprima Calibrazione", use_column_width=True)
+with t_sett:
+    st.subheader("⚙️ Regolazione Fine Coordinate")
+    if libreria["Tutti"]:
+        t_sel = st.selectbox("Template da regolare:", list(libreria["Tutti"].keys()))
+        def_coords = TEMPLATE_MAPS.get(t_sel, (0.0, 0.0, 100.0, 100.0))
+        
+        c_ctrl, c_view = st.columns([1, 2])
+        with c_ctrl:
+            x = st.number_input("X Start %", value=def_coords[0], step=0.1)
+            y = st.number_input("Y Start %", value=def_coords[1], step=0.1)
+            w = st.number_input("Larghezza %", value=def_coords[2], step=0.1)
+            h = st.number_input("Altezza %", value=def_coords[3], step=0.1)
+            t_test = st.file_uploader("Immagine di test:", type=['jpg', 'png'])
+            st.code(f"'{t_sel}': ({x}, {y}, {w}, {h}),")
+        
+        with c_view:
+            if t_test:
+                st.image(apply_mockup(libreria["Tutti"][t_sel], Image.open(t_test), (x,y,w,h)), use_column_width=True)
