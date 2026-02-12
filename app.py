@@ -80,6 +80,50 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     h, w = tmpl_gray.shape
     cover = np.array(cover_pil.convert('RGB')).astype(np.float64)
     
+    # --- LOGICA SPECIALE PER TEMPLATE TEMI_APP (AMSTERDAM FIXED) ---
+    if "temi_app" in template_name.lower():
+        col_brightness = np.mean(tmpl_gray, axis=0)
+        row_brightness = np.mean(tmpl_gray, axis=1)
+        
+        # Soglia dinamica per isolare il libro bianco dallo sfondo crema
+        dynamic_threshold = np.max(tmpl_gray) * 0.92
+        
+        white_cols = col_brightness > dynamic_threshold
+        white_rows = row_brightness > dynamic_threshold
+        
+        if not white_cols.any() or not white_rows.any():
+            return None
+        
+        # ESPANSIONE: Sottraiamo/Aggiungiamo 3px per "infilare" la cover sotto le ombre
+        app_bx1 = max(0, np.where(white_cols)[0][0] - 3)
+        app_bx2 = min(w - 1, np.where(white_cols)[0][-1] + 3)
+        app_by1 = max(0, np.where(white_rows)[0][0] - 3)
+        app_by2 = min(h - 1, np.where(white_rows)[0][-1] + 3)
+        
+        app_w = app_bx2 - app_bx1 + 1
+        app_h = app_by2 - app_by1 + 1
+        
+        # Resize della copertina
+        cover_final = np.array(
+            Image.fromarray(cover.astype(np.uint8)).resize((app_w, app_h), Image.LANCZOS)
+        ).astype(np.float64)
+        
+        # Creiamo il risultato partendo dal template originale (per mantenere lo sfondo crema)
+        result = tmpl.copy()
+        
+        # Prendiamo l'area del libro dal template per usarla come mappa di ombre
+        book_tmpl_area = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
+        
+        # Normalizziamo a 255 per la moltiplicazione (Multiply blend mode)
+        shadow_map = np.clip(book_tmpl_area / 255.0, 0, 1.0)
+        
+        for c in range(3):
+            # Moltiplichiamo i pixel della cover per le ombre originali del libro
+            result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * shadow_map
+            
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+
+    # --- RESTO DELLA LOGICA (per gli altri template) ---
     corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
     bg_val = float(np.median(corners))
     
@@ -93,82 +137,16 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     target_w = bx2 - bx1 + 1
     target_h = by2 - by1 + 1
     
-    # --- LOGICA SPECIALE PER TEMPLATE TEMI_APP CON OMBRE ---
-    if "temi_app" in template_name.lower():
-        # Template temi_app hanno ombre grigie ai bordi
-        # Devo trovare l'area del libro in modo più intelligente
-        
-        # 1. Trovo il picco di luminosità (centro del libro)
-        col_brightness = np.mean(tmpl_gray, axis=0)
-        row_brightness = np.mean(tmpl_gray, axis=1)
-        
-        # 2. Threshold ADATTIVO basato sulla media generale
-        overall_brightness = np.mean(tmpl_gray)
-        # Cerco zone che sono almeno il 95% del massimo (molto più tollerante)
-        col_threshold = np.max(col_brightness) * 0.95
-        row_threshold = np.max(row_brightness) * 0.95
-        
-        white_cols = col_brightness > col_threshold
-        white_rows = row_brightness > row_threshold
-        
-        if not white_cols.any() or not white_rows.any():
-            # Fallback: usa l'85% del massimo
-            white_cols = col_brightness > (np.max(col_brightness) * 0.85)
-            white_rows = row_brightness > (np.max(row_brightness) * 0.85)
-        
-        if not white_cols.any() or not white_rows.any():
-            return None
-        
-        # 3. Trovo i bordi dell'area bianca
-        app_bx1 = np.where(white_cols)[0][0]
-        app_bx2 = np.where(white_cols)[0][-1]
-        app_by1 = np.where(white_rows)[0][0]
-        app_by2 = np.where(white_rows)[0][-1]
-        
-        app_w = app_bx2 - app_bx1 + 1
-        app_h = app_by2 - app_by1 + 1
-        
-        # 4. Over-bleeding ENORME per coprire anche errori di allineamento
-        bleed = 25
-        
-        cover_big = np.array(
-            Image.fromarray(cover.astype(np.uint8)).resize(
-                (app_w + bleed*2, app_h + bleed*2), Image.LANCZOS
-            )
-        ).astype(np.float64)
-        
-        cover_final = cover_big[bleed:bleed+app_h, bleed:bleed+app_w]
-        
-        result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
-        
-        # 5. Calcolo ratio usando la luminosità MEDIANA dell'area bianca (più robusto)
-        book_tmpl = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
-        median_brightness = np.median(book_tmpl[book_tmpl > 200])  # Solo pixel chiari
-        
-        if median_brightness > 0:
-            book_ratio = np.minimum(book_tmpl / median_brightness, 1.05)
-        else:
-            book_ratio = np.minimum(book_tmpl / 240.0, 1.05)
-        
-        for c in range(3):
-            result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * book_ratio
-            
-        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
-    
     # --- LOGICA SPECIALE PER TEMPLATE BASE (SENZA DORSO) ---
     if "base_copertina" in template_name.lower():
-        # Template base: IGNORO la rilevazione automatica e copro TUTTO
-        # Trovo MANUALMENTE i bordi REALI del libro senza fidarmi dell'algoritmo
-        
-        # Cerco il bordo sinistro (primo pixel non-bianco)
+        # Template base: rilevamento manuale dei bordi
         real_bx1 = 0
         for x in range(w):
             col = tmpl_gray[:, x]
-            if np.any(col < 250):  # Trovato pixel non-bianco
+            if np.any(col < 250):
                 real_bx1 = x
                 break
         
-        # Cerco il bordo destro (ultimo pixel non-bianco) 
         real_bx2 = w - 1
         for x in range(w-1, -1, -1):
             col = tmpl_gray[:, x]
@@ -176,7 +154,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
                 real_bx2 = x
                 break
         
-        # Cerco il bordo superiore
         real_by1 = 0
         for y in range(h):
             row = tmpl_gray[y, :]
@@ -184,7 +161,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
                 real_by1 = y
                 break
         
-        # Cerco il bordo inferiore - QUI STA IL PROBLEMA!
         real_by2 = h - 1
         for y in range(h-1, -1, -1):
             row = tmpl_gray[y, :]
@@ -192,7 +168,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
                 real_by2 = y
                 break
         
-        # Estendo di 2px per sicurezza
         real_bx1 = max(0, real_bx1 - 2)
         real_bx2 = min(w - 1, real_bx2 + 2)
         real_by1 = max(0, real_by1 - 2)
@@ -201,7 +176,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         real_w = real_bx2 - real_bx1 + 1
         real_h = real_by2 - real_by1 + 1
         
-        # Over-bleeding ENORME
         bleed = 15
         
         cover_big = np.array(
@@ -223,7 +197,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
     
     # --- LOGICA NORMALE PER ALTRI TEMPLATE ---
-    # Prendo il colore medio dei bordi della cover
     border_pixels = []
     border_pixels.append(cover[:, :5].reshape(-1, 3))
     border_pixels.append(cover[-5:, :].reshape(-1, 3))
@@ -231,7 +204,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     border_pixels.append(cover[:, -5:].reshape(-1, 3))
     border_color = np.median(np.vstack(border_pixels), axis=0)
     
-    bleed = 12  # Aumentato a 12!
+    bleed = 12
     
     cover_big = np.array(
         Image.fromarray(cover.astype(np.uint8)).resize(
@@ -241,21 +214,16 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     
     cover_final = cover_big[bleed:bleed+target_h, bleed:bleed+target_w]
     
-    # Sostituisco pixel chiari ai bordi - MOLTO PIÙ AGGRESSIVO
-    # Abbasso threshold da 240 a 230 per catturare più pixel chiari
     threshold = 230
-    border_check = 6  # Controllo 6px invece di 5
+    border_check = 6
     
-    # Bordo sinistro
     for x in range(min(border_check, target_w)):
         for y in range(target_h):
-            # Se il pixel è più chiaro della media del colore di bordo, sostituiscilo
             pixel_brightness = np.mean(cover_final[y, x])
             border_brightness = np.mean(border_color)
-            if pixel_brightness > border_brightness + 10:  # Pixel molto più chiaro
+            if pixel_brightness > border_brightness + 10:
                 cover_final[y, x] = border_color
     
-    # Bordo inferiore
     for y in range(max(0, target_h-border_check), target_h):
         for x in range(target_w):
             pixel_brightness = np.mean(cover_final[y, x])
@@ -263,7 +231,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
             if pixel_brightness > border_brightness + 10:
                 cover_final[y, x] = border_color
     
-    # Bordo superiore
     for y in range(min(border_check, target_h)):
         for x in range(target_w):
             pixel_brightness = np.mean(cover_final[y, x])
@@ -271,7 +238,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
             if pixel_brightness > border_brightness + 10:
                 cover_final[y, x] = border_color
     
-    # Bordo destro
     for x in range(max(0, target_w-border_check), target_w):
         for y in range(target_h):
             pixel_brightness = np.mean(cover_final[y, x])
@@ -288,6 +254,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+
 
 # --- CARICAMENTO ---
 @st.cache_data
