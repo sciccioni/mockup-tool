@@ -1,6 +1,6 @@
 import streamlit as st
 import numpy as np
-from PIL import Image, ImageFilter, ImageOps  # ImageOps è fondamentale per le proporzioni
+from PIL import Image, ImageFilter, ImageOps
 import os
 import io
 import zipfile
@@ -10,6 +10,18 @@ st.set_page_config(page_title="PhotoBook Mockup - Smart Fit V4", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
+
+# --- COORDINATE FISSE PER TEMPLATE ---
+TEMPLATE_COORDS = {
+    # Nome file: (x1, y1, x2, y2, face_value, bleed)
+    "base_copertina_verticale.jpg": (100, 80, 900, 1200, 246, 15),
+    "base_verticale_temi_app.jpg": (150, 100, 850, 1150, 246, 15),
+    "base_bottom_app.jpg": (120, 90, 880, 1180, 246, 15),
+    "base_copertina_orizzontale.jpg": (80, 100, 1200, 900, 246, 15),
+    "base_orizzontale_temi_app.jpg": (100, 120, 1180, 880, 246, 15),
+    "base_quadrata_temi_app.jpg": (100, 100, 1000, 1000, 246, 15),
+    # Aggiungi qui gli altri template con le coordinate precise
+}
 
 # --- SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
@@ -22,27 +34,48 @@ def get_manual_cat(filename):
     if any(x in fn for x in ["20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
-# --- LOGICA CORE ---
-def find_book_region(tmpl_gray, bg_val):
-    h, w = tmpl_gray.shape
-    book_mask = tmpl_gray > (bg_val + 3)
-    rows = np.any(book_mask, axis=1); cols = np.any(book_mask, axis=0)
-    if not rows.any() or not cols.any(): return None
-    by1, by2 = np.where(rows)[0][[0, -1]]
-    bx1, bx2 = np.where(cols)[0][[0, -1]]
-    mid_y = (by1 + by2) // 2
-    row = tmpl_gray[mid_y]
-    face_x1 = bx1
-    for x in range(bx1, bx2 - 5):
-        if np.all(row[x:x + 5] >= 240):
-            face_x1 = x; break
-    margin = 30
-    face_area = tmpl_gray[by1+margin:by2-margin, face_x1+margin:bx2-margin]
-    face_val = float(np.median(face_area)) if face_area.size > 0 else 246.0
-    return {'bx1': int(bx1), 'bx2': int(bx2), 'by1': int(by1), 'by2': int(by2), 'face_val': face_val}
+# --- LOGICA CORE CON COORDINATE FISSE ---
+def composite_v4_fixed(tmpl_pil, cover_pil, template_name=""):
+    # 1. SFOCATURA 1PX
+    cover_pil = cover_pil.convert('RGB').filter(ImageFilter.GaussianBlur(radius=1))
+    
+    # Cerca coordinate fisse
+    coords = None
+    for key, values in TEMPLATE_COORDS.items():
+        if key.lower() in template_name.lower():
+            coords = values
+            break
+    
+    # Se non trova coordinate fisse, usa il metodo automatico (fallback)
+    if coords is None:
+        st.warning(f"⚠️ Template '{template_name}' non ha coordinate fisse, uso rilevamento automatico")
+        return composite_v4_auto(tmpl_pil, cover_pil, template_name)
+    
+    bx1, by1, bx2, by2, face_val, bleed = coords
+    
+    tmpl = np.array(tmpl_pil).astype(np.float64)
+    tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2]) if tmpl.ndim == 3 else tmpl
+    
+    target_w = bx2 - bx1 + 1
+    target_h = by2 - by1 + 1
+    
+    # --- SMART FIT ---
+    full_w, full_h = target_w + bleed*2, target_h + bleed*2
+    cover_fitted = ImageOps.fit(cover_pil, (full_w, full_h), method=Image.LANCZOS, centering=(0.5, 0.5))
+    cover_res = np.array(cover_fitted).astype(np.float64)
+    
+    cover_final = cover_res[bleed:bleed+target_h, bleed:bleed+target_w]
+    
+    result = np.stack([tmpl_gray]*3, axis=2)
+    book_ratio = np.minimum(tmpl_gray[by1:by2+1, bx1:bx2+1] / face_val, 1.0)
+    
+    for c in range(3):
+        result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
+            
+    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-def composite_v4_smart(tmpl_pil, cover_pil, template_name=""):
-    # 1. SFOCATURA 1PX (per ammorbidire i bordi)
+# --- METODO AUTOMATICO (FALLBACK) ---
+def composite_v4_auto(tmpl_pil, cover_pil, template_name=""):
     cover_pil = cover_pil.convert('RGB').filter(ImageFilter.GaussianBlur(radius=1))
     
     tmpl = np.array(tmpl_pil).astype(np.float64)
@@ -51,15 +84,17 @@ def composite_v4_smart(tmpl_pil, cover_pil, template_name=""):
     
     corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
     bg_val = float(np.median(corners))
-    reg = find_book_region(tmpl_gray, bg_val)
-    if reg is None: return None
     
-    target_w, target_h = reg['bx2'] - reg['bx1'] + 1, reg['by2'] - reg['by1'] + 1
-    is_base = any(x in template_name.lower() for x in ["base_copertina", "temi_app"])
-    bleed = 15 if is_base else 12
-
-    # --- 2. SMART FIT (RITAGLIO INTELLIGENTE) ---
-    # Invece di fare .resize() che schiaccia, usiamo .fit() che mantiene le proporzioni
+    book_mask = tmpl_gray > (bg_val + 5)
+    rows = np.any(book_mask, axis=1); cols = np.any(book_mask, axis=0)
+    if not rows.any() or not cols.any(): return None
+    
+    by1, by2 = np.where(rows)[0][[0, -1]]
+    bx1, bx2 = np.where(cols)[0][[0, -1]]
+    
+    target_w, target_h = bx2 - bx1 + 1, by2 - by1 + 1
+    bleed = 15
+    
     full_w, full_h = target_w + bleed*2, target_h + bleed*2
     cover_fitted = ImageOps.fit(cover_pil, (full_w, full_h), method=Image.LANCZOS, centering=(0.5, 0.5))
     cover_res = np.array(cover_fitted).astype(np.float64)
@@ -67,10 +102,10 @@ def composite_v4_smart(tmpl_pil, cover_pil, template_name=""):
     cover_final = cover_res[bleed:bleed+target_h, bleed:bleed+target_w]
     
     result = np.stack([tmpl_gray]*3, axis=2)
-    book_ratio = np.minimum(tmpl_gray[reg['by1']:reg['by2']+1, reg['bx1']:reg['bx2']+1] / reg['face_val'], 1.0)
+    book_ratio = np.minimum(tmpl_gray[by1:by2+1, bx1:bx2+1] / 246.0, 1.0)
     
     for c in range(3):
-        result[reg['by1']:reg['by2']+1, reg['bx1']:reg['bx2']+1, c] = cover_final[:, :, c] * book_ratio
+        result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
@@ -88,7 +123,7 @@ def load_templates():
 libreria = load_templates()
 
 # --- INTERFACCIA ---
-st.title("🚀 Mockup Engine - Smart Dimensioning")
+st.title("🚀 Mockup Engine - Fixed Coordinates")
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -105,13 +140,12 @@ if st.button("🔥 GENERA E MOSTRA ANTEPRIME"):
         st.error("Mancano file o template!")
     else:
         target_tmpls = libreria[scelta]
-        # Usiamo il primo file caricato per mostrare l'anteprima su TUTTI i template
         first_d = Image.open(disegni[0])
         
-        st.subheader(f"🖼️ Anteprima Smart Fit: {disegni[0].name}")
+        st.subheader(f"🖼️ Anteprima: {disegni[0].name}")
         cols = st.columns(4)
         for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
-            prev = composite_v4_smart(t_img, first_d, t_name)
+            prev = composite_v4_fixed(t_img, first_d, t_name)
             if prev:
                 cols[idx % 4].image(prev, caption=t_name, use_column_width=True)
 
@@ -125,7 +159,7 @@ if st.button("🔥 GENERA E MOSTRA ANTEPRIME"):
                 d_img = Image.open(d_file)
                 d_name = os.path.splitext(d_file.name)[0]
                 for t_name, t_img in target_tmpls.items():
-                    res = composite_v4_smart(t_img, d_img, t_name)
+                    res = composite_v4_fixed(t_img, d_img, t_name)
                     if res:
                         buf = io.BytesIO()
                         res.save(buf, format='JPEG', quality=95)
@@ -135,3 +169,10 @@ if st.button("🔥 GENERA E MOSTRA ANTEPRIME"):
         
         st.success("Completato!")
         st.download_button("📥 SCARICA ZIP", zip_buf.getvalue(), f"Mockups_{scelta}.zip")
+
+# Aggiungi prima del pulsante GENERA
+if st.checkbox("🔍 DEBUG: Trova coordinate"):
+    if libreria[scelta]:
+        for t_name, t_img in libreria[scelta].items():
+            st.write(f"**{t_name}** - Dimensioni: {t_img.size}")
+            st.image(t_img, width=300)
