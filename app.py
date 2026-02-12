@@ -5,8 +5,8 @@ import os
 import io
 import zipfile
 
-# --- 1. SETUP E COORDINATE ---
-st.set_page_config(page_title="PhotoBook Master Pro V4.9", layout="wide")
+# --- 1. SETUP E COORDINATE DEFINITIVE ---
+st.set_page_config(page_title="PhotoBook Master Pro V5.0", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
@@ -70,10 +70,12 @@ def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
 
 def get_manual_cat(filename):
     fn = filename.lower()
-    # Aggiunto 20x30 qui
+    # Verticali
     if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]): return "Verticali"
+    # Orizzontali
     if any(x in fn for x in ["orizzontale", "20x15", "27x20"]): return "Orizzontali"
-    if any(x in fn for x in ["quadrata", "20x20"]): return "Quadrati"
+    # Quadrati (Aggiunto 30x30)
+    if any(x in fn for x in ["quadrata", "20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
 @st.cache_data
@@ -92,10 +94,11 @@ def load_lib():
 libreria = load_lib()
 
 # --- 3. INTERFACCIA ---
-st.title("📖 PhotoBook Master V4.9")
+st.title("📖 PhotoBook Master V5.0")
 
 tab_prod, tab_sett = st.tabs(["🚀 PRODUZIONE BATCH", "⚙️ IMPOSTAZIONI TEMPLATE"])
 
+# --- TAB PRODUZIONE ---
 with tab_prod:
     c_ctrl, c_up = st.columns([1, 2])
     with c_ctrl:
@@ -129,15 +132,16 @@ with tab_prod:
             st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), "Mockups_Finali.zip")
         
         t_pre = list(libreria[formato].keys())[0]
+        st.subheader(f"Anteprima su {t_pre}")
         st.image(process_mockup(libreria[formato][t_pre], Image.open(disegni[-1]), t_pre, blur_val), use_column_width=True)
 
+# --- TAB IMPOSTAZIONI ---
 with tab_sett:
     st.subheader("🛠️ Calibrazione Template")
     c_sel, c_in = st.columns([1, 1])
     with c_sel:
-        t_mod = st.selectbox("Template:", list(libreria["Tutti"].keys()))
-        t_cov = st.file_uploader("Cover test:", type=['jpg', 'png'], key="cov_test")
-        # AGGIUNTO CONTROLLO BLUR ANCHE QUI
+        t_mod = st.selectbox("Template da regolare:", list(libreria["Tutti"].keys()))
+        t_cov = st.file_uploader("Carica cover di test:", type=['jpg', 'png'], key="cov_test")
         blur_test = st.slider("Test Sfocatura Bordi (px):", 0.0, 15.0, 5.0, 0.5, key="blur_sett")
     with c_in:
         if t_mod not in st.session_state.coords: st.session_state.coords[t_mod] = [0.0, 0.0, 100.0, 100.0]
@@ -148,4 +152,5 @@ with tab_sett:
         st.session_state.coords[t_mod][3] = c2.number_input("Altezza %", value=st.session_state.coords[t_mod][3], step=0.1)
         st.code(f"'{t_mod}': {st.session_state.coords[t_mod]},")
     if t_cov:
+        st.divider()
         st.image(process_mockup(libreria["Tutti"][t_mod], Image.open(t_cov), t_mod, blur_test), use_column_width=True)
