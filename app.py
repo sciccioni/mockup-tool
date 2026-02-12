@@ -419,7 +419,9 @@ if st.button("GENERA TUTTI I MOCKUP", type="primary", use_container_width=True):
             mime="application/zip",
             use_container_width=True
         )
-# --- CODICE PER  FARE MODIFICHE  ---
+
+
+
 """
 import streamlit as st
 import numpy as np
