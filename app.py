@@ -18,27 +18,42 @@ TEMPLATE_MAPS_FILE = "template_coordinates.json"
 def load_template_maps():
     """Carica le coordinate da file JSON o usa quelle di default"""
     default_maps = {
-        "base_verticale_temi_app.jpg": (35.1, 10.4, 29.8, 79.2),
-        "base_orizzontale_temi_app.jpg": (19.4, 9.4, 61.2, 81.2),
-        "base_orizzontale_temi_app3.jpg": (19.4, 9.4, 61.2, 81.2),
-        "base_quadrata_temi_app.jpg": (28.2, 10.4, 43.6, 77.4),
-        "base_bottom_app.jpg": (22.8, 4.4, 54.8, 89.6),
+        "base_verticale_temi_app.jpg": {"coords": (35.1, 10.4, 29.8, 79.2), "offset": 1},
+        "base_orizzontale_temi_app.jpg": {"coords": (19.4, 9.4, 61.2, 81.2), "offset": 1},
+        "base_orizzontale_temi_app3.jpg": {"coords": (19.4, 9.4, 61.2, 81.2), "offset": 1},
+        "base_quadrata_temi_app.jpg": {"coords": (28.2, 10.4, 43.6, 77.4), "offset": 1},
+        "base_bottom_app.jpg": {"coords": (22.8, 4.4, 54.8, 89.6), "offset": 1},
     }
     
     if os.path.exists(TEMPLATE_MAPS_FILE):
         try:
             with open(TEMPLATE_MAPS_FILE, 'r') as f:
                 loaded = json.load(f)
-                # Converte le liste in tuple
-                return {k: tuple(v) for k, v in loaded.items()}
+                # Converte il vecchio formato (tuple) al nuovo formato (dict con coords e offset)
+                result = {}
+                for k, v in loaded.items():
+                    if isinstance(v, list):  # Vecchio formato
+                        result[k] = {"coords": tuple(v), "offset": 1}
+                    elif isinstance(v, dict):  # Nuovo formato
+                        result[k] = {"coords": tuple(v.get("coords", (20, 10, 60, 80))), "offset": v.get("offset", 1)}
+                    else:
+                        result[k] = {"coords": tuple(v), "offset": 1}
+                return result
         except:
             return default_maps
     return default_maps
 
 def save_template_maps(maps):
     """Salva le coordinate nel file JSON"""
+    # Converte tuple in liste per JSON
+    save_data = {}
+    for k, v in maps.items():
+        save_data[k] = {
+            "coords": list(v["coords"]),
+            "offset": v["offset"]
+        }
     with open(TEMPLATE_MAPS_FILE, 'w') as f:
-        json.dump(maps, f, indent=2)
+        json.dump(save_data, f, indent=2)
 
 TEMPLATE_MAPS = load_template_maps()
 
@@ -100,7 +115,7 @@ def find_book_region(tmpl_gray, bg_val):
         'face_val': face_val,
     }
 
-def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=1):
+def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None):
     # Carichiamo tutto in RGB
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = (0.299 * tmpl_rgb[:,:,0] + 0.587 * tmpl_rgb[:,:,1] + 0.114 * tmpl_rgb[:,:,2])
@@ -109,7 +124,12 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=1):
     
     # --- LOGICA PRECISION PER TEMPLATE APP (COORDINATE ESATTE) ---
     if template_name in TEMPLATE_MAPS:
-        px, py, pw, ph = TEMPLATE_MAPS[template_name]
+        template_data = TEMPLATE_MAPS[template_name]
+        px, py, pw, ph = template_data["coords"]
+        
+        # Usa l'offset salvato se non specificato
+        if border_offset is None:
+            border_offset = template_data.get("offset", 1)
         
         # OFFSET: aggiungi pixel di sfocatura sui bordi
         x1 = int((px * w) / 100) + border_offset
@@ -405,16 +425,18 @@ elif menu == "🎯 Calibrazione Coordinate":
                 
                 # Coordinate attuali (o default se non esistono)
                 if selected_template in TEMPLATE_MAPS:
-                    current_coords = TEMPLATE_MAPS[selected_template]
-                    px, py, pw, ph = current_coords
-                    st.success(f"✅ Template già calibrato - Metodo: PRECISION")
+                    template_data = TEMPLATE_MAPS[selected_template]
+                    px, py, pw, ph = template_data["coords"]
+                    saved_offset = template_data.get("offset", 1)
+                    st.success(f"✅ Template già calibrato - Metodo: PRECISION | Offset salvato: {saved_offset}px")
                 else:
                     # Valori di default ragionevoli
                     px, py, pw, ph = 20.0, 10.0, 60.0, 80.0
+                    saved_offset = 1
                     st.warning(f"⚠️ Template NON calibrato - Usa il metodo automatico. Imposta coordinate per usare PRECISION.")
                 
                 st.subheader("Coordinate Salvate sul Server")
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
                     st.metric("X (%)", f"{px:.1f}")
                 with col2:
@@ -423,6 +445,8 @@ elif menu == "🎯 Calibrazione Coordinate":
                     st.metric("Width (%)", f"{pw:.1f}")
                 with col4:
                     st.metric("Height (%)", f"{ph:.1f}")
+                with col5:
+                    st.metric("Offset (px)", f"{saved_offset}")
                 
                 st.divider()
                 
@@ -436,7 +460,7 @@ elif menu == "🎯 Calibrazione Coordinate":
                 if 'cal_ph' not in st.session_state:
                     st.session_state.cal_ph = ph
                 if 'cal_offset' not in st.session_state:
-                    st.session_state.cal_offset = 1
+                    st.session_state.cal_offset = saved_offset
                 if 'test_image' not in st.session_state:
                     st.session_state.test_image = None
                 
@@ -573,12 +597,16 @@ elif menu == "🎯 Calibrazione Coordinate":
                 # Pulsanti di azione
                 col_save, col_remove = st.columns(2)
                 with col_save:
-                    if st.button("💾 SALVA COORDINATE SUL SERVER", type="primary"):
-                        TEMPLATE_MAPS[selected_template] = (st.session_state.cal_px, st.session_state.cal_py, 
-                                                            st.session_state.cal_pw, st.session_state.cal_ph)
+                    if st.button("💾 SALVA COORDINATE E OFFSET SUL SERVER", type="primary"):
+                        TEMPLATE_MAPS[selected_template] = {
+                            "coords": (st.session_state.cal_px, st.session_state.cal_py, 
+                                      st.session_state.cal_pw, st.session_state.cal_ph),
+                            "offset": st.session_state.cal_offset
+                        }
                         save_template_maps(TEMPLATE_MAPS)
-                        st.success(f"✅ Coordinate salvate PERMANENTEMENTE per {selected_template}!")
-                        st.info(f"Ora TUTTI gli utenti useranno queste coordinate con offset {st.session_state.cal_offset}px.")
+                        st.success(f"✅ Coordinate E OFFSET salvati PERMANENTEMENTE per {selected_template}!")
+                        st.info(f"Coordinate: X={st.session_state.cal_px:.1f}%, Y={st.session_state.cal_py:.1f}%, W={st.session_state.cal_pw:.1f}%, H={st.session_state.cal_ph:.1f}%")
+                        st.info(f"Offset: {st.session_state.cal_offset}px")
                         st.balloons()
                 
                 with col_remove:
@@ -593,10 +621,6 @@ elif menu == "🎯 Calibrazione Coordinate":
 
 elif menu == "⚡ Produzione":
     st.subheader("⚡ Produzione")
-    
-    # Controllo globale offset
-    st.sidebar.subheader("⚙️ Impostazioni Globali")
-    global_offset = st.sidebar.slider("Border Offset (px)", 0, 20, 1, 1, help="Offset bordi per tutti i template PRECISION")
     
     col_sel, col_del = st.columns([3, 1])
     with col_sel:
@@ -616,7 +640,7 @@ elif menu == "⚡ Produzione":
 
     if preview_design:
         d_img = Image.open(preview_design)
-        st.info(f"Design caricato: {preview_design.name} | Offset bordi: {global_offset}px")
+        st.info(f"Design caricato: {preview_design.name}")
         
         target_tmpls = libreria[scelta]
         
@@ -627,11 +651,12 @@ elif menu == "⚡ Produzione":
             for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
                 with cols[idx % 4]:
                     with st.spinner(f"Generando {t_name}..."):
-                        result = composite_v3_fixed(t_img, d_img, t_name, global_offset)
+                        result = composite_v3_fixed(t_img, d_img, t_name)
                         if result:
                             # Mostra badge se usa PRECISION
                             if t_name in TEMPLATE_MAPS:
-                                st.caption("🎯 PRECISION")
+                                offset_used = TEMPLATE_MAPS[t_name].get("offset", 1)
+                                st.caption(f"🎯 PRECISION (offset: {offset_used}px)")
                             st.image(result, caption=t_name, use_column_width=True)
                         else:
                             st.error(f"Errore: {t_name}")
@@ -659,7 +684,7 @@ elif menu == "⚡ Produzione":
                     d_img = Image.open(d_file)
                     d_name = os.path.splitext(d_file.name)[0]
                     for t_name, t_img in target_tmpls.items():
-                        res = composite_v3_fixed(t_img, d_img, t_name, global_offset)
+                        res = composite_v3_fixed(t_img, d_img, t_name)
                         if res:
                             buf = io.BytesIO()
                             res.save(buf, format='JPEG', quality=95, subsampling=0)
