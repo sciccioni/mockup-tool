@@ -5,36 +5,16 @@ import os
 import io
 import zipfile
 
-# --- 1. COORDINATE DI PARTENZA (MEMORIA) ---
+# --- 1. COORDINATE DEFINITIVE (SOLO PER TEMPLATE APP) ---
 TEMPLATE_MAPS = {
-    "base_verticale_temi_app": (35.1, 10.4, 29.8, 79.2),
-    "base_orizzontale_temi_app": (19.4, 9.4, 61.2, 81.2),
-    "base_orizzontale_temi_app3": (19.4, 9.4, 61.2, 81.2),
-    "base_quadrata_temi_app": (28.2, 10.4, 43.6, 77.4),
-    "base_bottom_app": (22.8, 4.4, 54.8, 89.6),
+    "base_verticale_temi_app.jpg": (34.6, 9.2, 30.2, 80.3),
+    "base_bottom_app.jpg": (21.9, 4.9, 56.5, 91.3),
+    "base_orizzontale_temi_app.jpg": (18.9, 9.4, 61.8, 83.0),
+    "base_orizzontale_temi_app3.jpg": (18.7, 9.4, 62.2, 82.6),
+    "base_quadrata_temi_app.jpg": (27.8, 10.8, 44.5, 79.0),
 }
 
-# --- 2. MOTORE DI COMPOSIZIONE ---
-def process_mockup(tmpl_pil, cover_pil, x_pct, y_pct, w_pct, h_pct):
-    tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
-    tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
-    h, w, _ = tmpl_rgb.shape
-    
-    x1, y1 = int((x_pct * w) / 100), int((y_pct * h) / 100)
-    tw, th = int((w_pct * w) / 100), int((h_pct * h) / 100)
-    
-    cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
-    
-    # Shadow Map (Multiply) per il realismo della carta e delle pieghe
-    book_shadows = tmpl_gray[y1:y1+th, x1:x1+tw]
-    shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
-    
-    result = tmpl_rgb.copy()
-    for c in range(3):
-        result[y1:y1+th, x1:x1+tw, c] = cover_res[:, :, c] * shadow_map
-        
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
-
+# --- 2. LOGICA DI SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]): return "Verticali"
@@ -42,12 +22,60 @@ def get_manual_cat(filename):
     if any(x in fn for x in ["quadrata", "20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
-# --- 3. INTERFACCIA STREAMLIT ---
-st.set_page_config(page_title="Mockup Precision Input", layout="wide")
-st.title("📖 PhotoBook Mockup - Inserimento Manuale")
+# --- 3. MOTORE DI COMPOSIZIONE IBRIDO ---
+def find_book_region_auto(tmpl_gray, bg_val):
+    """Rilevamento bordi automatico per template standard"""
+    h, w = tmpl_gray.shape
+    book_mask = tmpl_gray > (bg_val + 3)
+    rows = np.any(book_mask, axis=1)
+    cols = np.any(book_mask, axis=0)
+    if not rows.any() or not cols.any(): return None
+    by1, by2 = np.where(rows)[0][[0, -1]]
+    bx1, bx2 = np.where(cols)[0][[0, -1]]
+    
+    margin = 30
+    face_area = tmpl_gray[by1+margin:by2-margin, bx1+margin:bx2-margin]
+    face_val = float(np.median(face_area)) if face_area.size > 0 else 246.0
+    return {'bx1': bx1, 'bx2': bx2, 'by1': by1, 'by2': by2, 'face_val': face_val}
+
+def process_mockup(tmpl_pil, cover_pil, t_name):
+    tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
+    tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
+    h, w, _ = tmpl_rgb.shape
+    cover = cover_pil.convert('RGB')
+
+    # Verifica se usare coordinate fisse o auto
+    if t_name in TEMPLATE_MAPS:
+        # LOGICA A: COORDINATE FISSE (MOLTIPLICA)
+        px, py, pw, ph = TEMPLATE_MAPS[t_name]
+        x1, y1 = int((px * w) / 100), int((py * h) / 100)
+        tw, th = int((pw * w) / 100), int((ph * h) / 100)
+        c_res = np.array(cover.resize((tw, th), Image.LANCZOS)).astype(np.float64)
+        
+        shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / 255.0, 0, 1.0)
+        result = tmpl_rgb.copy()
+        for c in range(3):
+            result[y1:y1+th, x1:x1+tw, c] = c_res[:, :, c] * shadow_map
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+    else:
+        # LOGICA B: AUTOMATICA (FALLBACK)
+        corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
+        reg = find_book_region_auto(tmpl_gray, np.median(corners))
+        if not reg: return None
+        tw, th = reg['bx2']-reg['bx1']+1, reg['by2']-reg['by1']+1
+        c_res = np.array(cover.resize((tw, th), Image.LANCZOS)).astype(np.float64)
+        ratio = np.clip(tmpl_gray[reg['by1']:reg['by2']+1, reg['bx1']:reg['bx2']+1] / reg['face_val'], 0, 1.0)
+        result = tmpl_rgb.copy()
+        for c in range(3):
+            result[reg['by1']:reg['by2']+1, reg['bx1']:reg['bx2']+1, c] = c_res[:, :, c] * ratio
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+
+# --- 4. INTERFACCIA STREAMLIT ---
+st.set_page_config(page_title="PhotoBook Production V4", layout="wide")
+st.title("📖 PhotoBook Mockup Compositor - Production")
 
 @st.cache_data
-def load_lib():
+def load_library():
     path = "templates"
     lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
     if os.path.exists(path):
@@ -57,10 +85,10 @@ def load_lib():
                 if cat in lib: lib[cat][f] = Image.open(os.path.join(path, f))
     return lib
 
-libreria = load_lib()
+libreria = load_library()
 
-# Tab dei template
-tabs = st.tabs(["📂 Verticali", "📂 Orizzontali", "📂 Quadrati"])
+# Libreria Visuale a Tab
+tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
 for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
     with tab:
         cols = st.columns(5)
@@ -69,55 +97,39 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
 
 st.divider()
 
-# --- SEZIONE CALIBRAZIONE MANUALE ---
-st.subheader("🚀 Configurazione e Produzione")
+# Area di Produzione
+st.subheader("🚀 Produzione in Batch")
+c1, c2 = st.columns([1, 2])
+with c1:
+    categoria = st.radio("Seleziona Formato:", ["Verticali", "Orizzontali", "Quadrati"])
+with c2:
+    disegni = st.file_uploader(f"Carica i design per {categoria}:", accept_multiple_files=True)
 
-col_settings, col_upload = st.columns([2, 2])
-
-with col_settings:
-    st.markdown("### 1. Inserimento Coordinate (Pixel %)")
-    categoria = st.selectbox("Seleziona Formato:", ["Verticali", "Orizzontali", "Quadrati"])
-    
-    if libreria[categoria]:
-        t_nome = st.selectbox("Scegli Template:", list(libreria[categoria].keys()))
-        
-        # Recupero i valori di default
-        app_key = next((k for k in TEMPLATE_MAPS.keys() if k in t_nome.lower()), None)
-        defaults = TEMPLATE_MAPS.get(app_key, (0.0, 0.0, 100.0, 100.0))
-        
-        # --- INPUT MANUALI ---
-        c1, c2 = st.columns(2)
-        with c1:
-            val_x = st.number_input("X (Inizio Orizzontale %)", value=float(defaults[0]), step=0.1, format="%.1f")
-            val_w = st.number_input("Larghezza (%)", value=float(defaults[2]), step=0.1, format="%.1f")
-        with c2:
-            val_y = st.number_input("Y (Inizio Verticale %)", value=float(defaults[1]), step=0.1, format="%.1f")
-            val_h = st.number_input("Altezza (%)", value=float(defaults[3]), step=0.1, format="%.1f")
-            
-        st.info("💡 Copia questa riga nel dizionario TEMPLATE_MAPS per salvare:")
-        st.code(f"'{t_nome}': ({val_x}, {val_y}, {val_w}, {val_h}),", language='python')
-    else:
-        st.warning("Nessun template trovato.")
-
-with col_upload:
-    st.markdown("### 2. Carica Design")
-    disegni = st.file_uploader("Trascina qui le grafiche:", accept_multiple_files=True)
-    
-    if disegni and libreria[categoria]:
-        if st.button("🚀 GENERA E SCARICA ZIP"):
-            zip_io = io.BytesIO()
-            with zipfile.ZipFile(zip_io, "a") as zf:
-                for f in disegni:
-                    res = process_mockup(libreria[categoria][t_nome], Image.open(f), val_x, val_y, val_w, val_h)
-                    buf = io.BytesIO()
-                    res.save(buf, format='JPEG', quality=95)
-                    zf.writestr(f"Mockup_{f.name}", buf.getvalue())
-            
-            st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), f"Mockups_{t_nome}.zip")
-
-# --- ANTEPRIMA ---
 if disegni and libreria[categoria]:
+    if st.button("🚀 GENERA TUTTI I MOCKUP"):
+        zip_io = io.BytesIO()
+        with zipfile.ZipFile(zip_io, "a") as zf:
+            bar = st.progress(0)
+            target_list = libreria[categoria]
+            total_ops = len(disegni) * len(target_list)
+            curr = 0
+            for d_file in disegni:
+                d_img = Image.open(d_file)
+                d_name = os.path.splitext(d_file.name)[0]
+                for t_name, t_img in target_list.items():
+                    res = process_mockup(t_img, d_img, t_name)
+                    if res:
+                        buf = io.BytesIO()
+                        res.save(buf, format='JPEG', quality=95)
+                        zf.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
+                    curr += 1
+                    bar.progress(curr / total_ops)
+        st.success("✅ Completato!")
+        st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), f"Mockups_{categoria}.zip")
+
+    # Anteprima dell'ultimo file caricato
     st.divider()
-    st.subheader("👁️ Anteprima Risultato")
-    preview = process_mockup(libreria[categoria][t_nome], Image.open(disegni[-1]), val_x, val_y, val_w, val_h)
-    st.image(preview, use_column_width=True)
+    st.subheader("👁️ Anteprima Rapida")
+    t_test_name = list(libreria[categoria].keys())[0]
+    preview = process_mockup(libreria[categoria][t_test_name], Image.open(disegni[-1]), t_test_name)
+    st.image(preview, caption=f"Anteprima su {t_test_name}", use_column_width=True)
