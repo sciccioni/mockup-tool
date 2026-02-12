@@ -12,15 +12,14 @@ if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
 # --- COORDINATE FISSE PER TEMPLATE ---
+# Formato: (x1, y1, x2, y2, face_value, bleed)
 TEMPLATE_COORDS = {
-    # Nome file: (x1, y1, x2, y2, face_value, bleed)
     "base_copertina_verticale.jpg": (100, 80, 900, 1200, 246, 15),
     "base_verticale_temi_app.jpg": (150, 100, 850, 1150, 246, 15),
     "base_bottom_app.jpg": (120, 90, 880, 1180, 246, 15),
     "base_copertina_orizzontale.jpg": (80, 100, 1200, 900, 246, 15),
     "base_orizzontale_temi_app.jpg": (100, 120, 1180, 880, 246, 15),
     "base_quadrata_temi_app.jpg": (100, 100, 1000, 1000, 246, 15),
-    # Aggiungi qui gli altri template con le coordinate precise
 }
 
 # --- SMISTAMENTO CATEGORIE ---
@@ -48,13 +47,18 @@ def composite_v4_fixed(tmpl_pil, cover_pil, template_name=""):
     
     # Se non trova coordinate fisse, usa il metodo automatico (fallback)
     if coords is None:
-        st.warning(f"⚠️ Template '{template_name}' non ha coordinate fisse, uso rilevamento automatico")
         return composite_v4_auto(tmpl_pil, cover_pil, template_name)
     
     bx1, by1, bx2, by2, face_val, bleed = coords
     
     tmpl = np.array(tmpl_pil).astype(np.float64)
     tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2]) if tmpl.ndim == 3 else tmpl
+    h, w = tmpl_gray.shape
+    
+    # Verifica che le coordinate siano valide per questo template
+    if bx2 >= w or by2 >= h:
+        st.warning(f"⚠️ Coordinate invalide per {template_name} (template: {w}x{h})")
+        return composite_v4_auto(tmpl_pil, cover_pil, template_name)
     
     target_w = bx2 - bx1 + 1
     target_h = by2 - by1 + 1
@@ -66,8 +70,22 @@ def composite_v4_fixed(tmpl_pil, cover_pil, template_name=""):
     
     cover_final = cover_res[bleed:bleed+target_h, bleed:bleed+target_w]
     
+    # VERIFICA DIMENSIONI
+    if cover_final.shape[0] != target_h or cover_final.shape[1] != target_w:
+        st.error(f"Mismatch dimensioni: cover_final={cover_final.shape}, target={target_h}x{target_w}")
+        return None
+    
     result = np.stack([tmpl_gray]*3, axis=2)
-    book_ratio = np.minimum(tmpl_gray[by1:by2+1, bx1:bx2+1] / face_val, 1.0)
+    
+    # Estrai la region del libro dal template
+    book_region = tmpl_gray[by1:by2+1, bx1:bx2+1]
+    
+    # VERIFICA COMPATIBILITA'
+    if book_region.shape[0] != cover_final.shape[0] or book_region.shape[1] != cover_final.shape[1]:
+        st.error(f"Shape mismatch: book_region={book_region.shape}, cover_final={cover_final.shape[:2]}")
+        return None
+    
+    book_ratio = np.minimum(book_region / face_val, 1.0)
     
     for c in range(3):
         result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
@@ -86,8 +104,11 @@ def composite_v4_auto(tmpl_pil, cover_pil, template_name=""):
     bg_val = float(np.median(corners))
     
     book_mask = tmpl_gray > (bg_val + 5)
-    rows = np.any(book_mask, axis=1); cols = np.any(book_mask, axis=0)
-    if not rows.any() or not cols.any(): return None
+    rows = np.any(book_mask, axis=1)
+    cols = np.any(book_mask, axis=0)
+    
+    if not rows.any() or not cols.any(): 
+        return None
     
     by1, by2 = np.where(rows)[0][[0, -1]]
     bx1, bx2 = np.where(cols)[0][[0, -1]]
@@ -102,7 +123,8 @@ def composite_v4_auto(tmpl_pil, cover_pil, template_name=""):
     cover_final = cover_res[bleed:bleed+target_h, bleed:bleed+target_w]
     
     result = np.stack([tmpl_gray]*3, axis=2)
-    book_ratio = np.minimum(tmpl_gray[by1:by2+1, bx1:bx2+1] / 246.0, 1.0)
+    book_region = tmpl_gray[by1:by2+1, bx1:bx2+1]
+    book_ratio = np.minimum(book_region / 246.0, 1.0)
     
     for c in range(3):
         result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
@@ -122,8 +144,15 @@ def load_templates():
 
 libreria = load_templates()
 
+# --- DEBUG HELPER ---
+if st.sidebar.checkbox("🔍 Mostra dimensioni template"):
+    for cat in ["Verticali", "Orizzontali", "Quadrati"]:
+        st.sidebar.write(f"**{cat}:**")
+        for t_name, t_img in libreria[cat].items():
+            st.sidebar.write(f"  • {t_name}: {t_img.size[0]}x{t_img.size[1]}")
+
 # --- INTERFACCIA ---
-st.title("🚀 Mockup Engine - Fixed Coordinates")
+st.title("🚀 Mockup Engine - Fixed Coordinates V2")
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -148,6 +177,8 @@ if st.button("🔥 GENERA E MOSTRA ANTEPRIME"):
             prev = composite_v4_fixed(t_img, first_d, t_name)
             if prev:
                 cols[idx % 4].image(prev, caption=t_name, use_column_width=True)
+            else:
+                cols[idx % 4].error(f"❌ {t_name}")
 
         # --- GENERAZIONE ZIP ---
         zip_buf = io.BytesIO()
@@ -169,10 +200,3 @@ if st.button("🔥 GENERA E MOSTRA ANTEPRIME"):
         
         st.success("Completato!")
         st.download_button("📥 SCARICA ZIP", zip_buf.getvalue(), f"Mockups_{scelta}.zip")
-
-# Aggiungi prima del pulsante GENERA
-if st.checkbox("🔍 DEBUG: Trova coordinate"):
-    if libreria[scelta]:
-        for t_name, t_img in libreria[scelta].items():
-            st.write(f"**{t_name}** - Dimensioni: {t_img.size}")
-            st.image(t_img, width=300)
