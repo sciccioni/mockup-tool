@@ -29,7 +29,6 @@ def load_template_maps():
         try:
             with open(TEMPLATE_MAPS_FILE, 'r') as f:
                 loaded = json.load(f)
-                # Converte il formato
                 result = {}
                 for k, v in loaded.items():
                     if isinstance(v, list):
@@ -313,6 +312,23 @@ def apply_test_image_blended(template_img, test_img, px, py, pw, ph, border_offs
     
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
+def draw_rectangle_on_template(template_img, px, py, pw, ph):
+    """Disegna un rettangolo rosso sull'immagine per mostrare l'area"""
+    from PIL import ImageDraw
+    img = template_img.copy()
+    draw = ImageDraw.Draw(img)
+    
+    w, h = img.size
+    x1 = int((px * w) / 100)
+    y1 = int((py * h) / 100)
+    x2 = x1 + int((pw * w) / 100)
+    y2 = y1 + int((ph * h) / 100)
+    
+    # Rettangolo rosso
+    draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
+    
+    return img
+
 # --- CARICAMENTO ---
 @st.cache_data
 def load_fixed_templates():
@@ -398,7 +414,7 @@ if menu == "📚 Templates":
 elif menu == "🎯 Calibrazione Coordinate":
     st.header("🎯 Calibrazione Coordinate Template")
     
-    st.info("💡 Le coordinate vengono salvate nel file template_coordinates.json nella cartella dell'app.")
+    st.info("💡 Le coordinate vengono salvate nel file template_coordinates.json")
     
     all_template_names = get_all_template_names()
     
@@ -429,7 +445,7 @@ elif menu == "🎯 Calibrazione Coordinate":
                 else:
                     px, py, pw, ph = 20.0, 10.0, 60.0, 80.0
                     saved_offset = 1
-                    st.warning(f"⚠️ Template NON calibrato - metodo automatico")
+                    st.warning(f"⚠️ Template NON calibrato")
                 
                 st.subheader("Coordinate Salvate")
                 col1, col2, col3, col4, col5 = st.columns(5)
@@ -456,164 +472,89 @@ elif menu == "🎯 Calibrazione Coordinate":
                     st.session_state.test_image = None
                     st.session_state.current_template = selected_template
                 
-                # Carica immagine di test
-                st.subheader("📸 Immagine di Test")
-                col_upload, col_remove = st.columns([3, 1])
-                with col_upload:
-                    test_upload = st.file_uploader("Carica immagine per anteprima BLENDED in tempo reale", type=['jpg', 'jpeg', 'png'], key='test_img_upload')
-                    if test_upload:
-                        st.session_state.test_image = Image.open(test_upload)
+                # Controlli principali
+                st.subheader("Controlli")
                 
-                with col_remove:
-                    if st.session_state.test_image is not None:
-                        if st.button("🗑️ Rimuovi"):
-                            st.session_state.test_image = None
-                            st.rerun()
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_px = st.number_input("X Position (%)", 0.0, 100.0, st.session_state.cal_px, 0.1, format="%.1f")
+                    new_pw = st.number_input("Width (%)", 1.0, 100.0, st.session_state.cal_pw, 0.1, format="%.1f")
+                with col2:
+                    new_py = st.number_input("Y Position (%)", 0.0, 100.0, st.session_state.cal_py, 0.1, format="%.1f")
+                    new_ph = st.number_input("Height (%)", 1.0, 100.0, st.session_state.cal_ph, 0.1, format="%.1f")
+                
+                new_offset = st.slider("Border Offset (px)", 0, 20, st.session_state.cal_offset, 1)
+                
+                st.session_state.cal_px = new_px
+                st.session_state.cal_py = new_py
+                st.session_state.cal_pw = new_pw
+                st.session_state.cal_ph = new_ph
+                st.session_state.cal_offset = new_offset
                 
                 st.divider()
                 
-                # Layout a due colonne
-                col_controls, col_preview = st.columns([1, 1])
+                # Tabs per visualizzazione
+                tab1, tab2, tab3 = st.tabs(["📏 Rettangolo Rosso", "📸 Immagine di Test", "💾 Salva"])
                 
-                with col_controls:
-                    st.subheader("🎚️ Controlli")
-                    
-                    # X Position
-                    st.write("**X Position (%)**")
-                    col_x = st.columns([1, 1, 6, 1])
-                    with col_x[0]:
-                        if st.button("−", key="x_minus"):
-                            st.session_state.cal_px = max(0.0, st.session_state.cal_px - 0.1)
-                            st.rerun()
-                    with col_x[1]:
-                        if st.button("+", key="x_plus"):
-                            st.session_state.cal_px = min(100.0, st.session_state.cal_px + 0.1)
-                            st.rerun()
-                    with col_x[2]:
-                        new_px = st.slider("X", 0.0, 100.0, st.session_state.cal_px, 0.1, key='px_slider', label_visibility="collapsed")
-                        st.session_state.cal_px = new_px
-                    with col_x[3]:
-                        st.code(f"{st.session_state.cal_px:.1f}")
-                    
-                    # Y Position
-                    st.write("**Y Position (%)**")
-                    col_y = st.columns([1, 1, 6, 1])
-                    with col_y[0]:
-                        if st.button("−", key="y_minus"):
-                            st.session_state.cal_py = max(0.0, st.session_state.cal_py - 0.1)
-                            st.rerun()
-                    with col_y[1]:
-                        if st.button("+", key="y_plus"):
-                            st.session_state.cal_py = min(100.0, st.session_state.cal_py + 0.1)
-                            st.rerun()
-                    with col_y[2]:
-                        new_py = st.slider("Y", 0.0, 100.0, st.session_state.cal_py, 0.1, key='py_slider', label_visibility="collapsed")
-                        st.session_state.cal_py = new_py
-                    with col_y[3]:
-                        st.code(f"{st.session_state.cal_py:.1f}")
-                    
-                    # Width
-                    st.write("**Width (%)**")
-                    col_w = st.columns([1, 1, 6, 1])
-                    with col_w[0]:
-                        if st.button("−", key="w_minus"):
-                            st.session_state.cal_pw = max(1.0, st.session_state.cal_pw - 0.1)
-                            st.rerun()
-                    with col_w[1]:
-                        if st.button("+", key="w_plus"):
-                            st.session_state.cal_pw = min(100.0, st.session_state.cal_pw + 0.1)
-                            st.rerun()
-                    with col_w[2]:
-                        new_pw = st.slider("W", 1.0, 100.0, st.session_state.cal_pw, 0.1, key='pw_slider', label_visibility="collapsed")
-                        st.session_state.cal_pw = new_pw
-                    with col_w[3]:
-                        st.code(f"{st.session_state.cal_pw:.1f}")
-                    
-                    # Height
-                    st.write("**Height (%)**")
-                    col_h = st.columns([1, 1, 6, 1])
-                    with col_h[0]:
-                        if st.button("−", key="h_minus"):
-                            st.session_state.cal_ph = max(1.0, st.session_state.cal_ph - 0.1)
-                            st.rerun()
-                    with col_h[1]:
-                        if st.button("+", key="h_plus"):
-                            st.session_state.cal_ph = min(100.0, st.session_state.cal_ph + 0.1)
-                            st.rerun()
-                    with col_h[2]:
-                        new_ph = st.slider("H", 1.0, 100.0, st.session_state.cal_ph, 0.1, key='ph_slider', label_visibility="collapsed")
-                        st.session_state.cal_ph = new_ph
-                    with col_h[3]:
-                        st.code(f"{st.session_state.cal_ph:.1f}")
-                    
-                    st.divider()
-                    
-                    # Offset
-                    st.write("**Border Offset (px)**")
-                    col_off = st.columns([1, 1, 6, 1])
-                    with col_off[0]:
-                        if st.button("−", key="off_minus"):
-                            st.session_state.cal_offset = max(0, st.session_state.cal_offset - 1)
-                            st.rerun()
-                    with col_off[1]:
-                        if st.button("+", key="off_plus"):
-                            st.session_state.cal_offset = min(20, st.session_state.cal_offset + 1)
-                            st.rerun()
-                    with col_off[2]:
-                        new_offset = st.slider("Offset", 0, 20, st.session_state.cal_offset, 1, key='off_slider', label_visibility="collapsed")
-                        st.session_state.cal_offset = new_offset
-                    with col_off[3]:
-                        st.code(f"{st.session_state.cal_offset}px")
+                with tab1:
+                    st.write("Visualizza l'area con un rettangolo rosso")
+                    rect_img = draw_rectangle_on_template(
+                        template_img,
+                        st.session_state.cal_px,
+                        st.session_state.cal_py,
+                        st.session_state.cal_pw,
+                        st.session_state.cal_ph
+                    )
+                    st.image(rect_img, use_column_width=True)
                 
-                with col_preview:
-                    st.subheader("👁️ Anteprima Live")
+                with tab2:
+                    test_upload = st.file_uploader("Carica immagine di test", type=['jpg', 'jpeg', 'png'], key='test_img')
+                    if test_upload:
+                        st.session_state.test_image = Image.open(test_upload)
                     
                     if st.session_state.test_image is not None:
                         preview_img = apply_test_image_blended(
-                            template_img, 
+                            template_img,
                             st.session_state.test_image,
-                            st.session_state.cal_px, 
-                            st.session_state.cal_py, 
-                            st.session_state.cal_pw, 
+                            st.session_state.cal_px,
+                            st.session_state.cal_py,
+                            st.session_state.cal_pw,
                             st.session_state.cal_ph,
                             st.session_state.cal_offset
                         )
-                        st.image(preview_img, caption=f"Anteprima (Offset: {st.session_state.cal_offset}px)", use_column_width=True)
+                        st.image(preview_img, caption=f"Anteprima con Offset {st.session_state.cal_offset}px", use_column_width=True)
                     else:
-                        st.info("⬆️ Carica un'immagine di test")
-                        st.image(template_img, caption="Template originale", use_column_width=True)
+                        st.info("Carica un'immagine di test per vedere l'anteprima")
                 
-                st.divider()
-                
-                # Pulsanti di azione
-                col_save, col_download, col_remove = st.columns(3)
-                with col_save:
-                    if st.button("💾 SALVA COORDINATE", type="primary"):
-                        TEMPLATE_MAPS[selected_template] = {
-                            "coords": (st.session_state.cal_px, st.session_state.cal_py, 
-                                      st.session_state.cal_pw, st.session_state.cal_ph),
-                            "offset": st.session_state.cal_offset
-                        }
-                        save_template_maps(TEMPLATE_MAPS)
-                        st.success(f"✅ Salvato!")
-                        st.balloons()
-                
-                with col_download:
-                    # Pulsante per scaricare il JSON
-                    json_data = json.dumps(TEMPLATE_MAPS, indent=2)
-                    st.download_button(
-                        label="📥 SCARICA JSON",
-                        data=json_data,
-                        file_name="template_coordinates.json",
-                        mime="application/json"
-                    )
-                
-                with col_remove:
+                with tab3:
+                    col_save, col_download = st.columns(2)
+                    
+                    with col_save:
+                        if st.button("💾 SALVA COORDINATE", type="primary", use_container_width=True):
+                            TEMPLATE_MAPS[selected_template] = {
+                                "coords": (st.session_state.cal_px, st.session_state.cal_py,
+                                          st.session_state.cal_pw, st.session_state.cal_ph),
+                                "offset": st.session_state.cal_offset
+                            }
+                            save_template_maps(TEMPLATE_MAPS)
+                            st.success("✅ Coordinate salvate!")
+                            st.balloons()
+                    
+                    with col_download:
+                        json_data = json.dumps(TEMPLATE_MAPS, indent=2)
+                        st.download_button(
+                            label="📥 SCARICA JSON",
+                            data=json_data,
+                            file_name="template_coordinates.json",
+                            mime="application/json",
+                            use_container_width=True
+                        )
+                    
                     if selected_template in TEMPLATE_MAPS:
-                        if st.button("🗑️ RIMUOVI"):
+                        if st.button("🗑️ RIMUOVI CALIBRAZIONE", use_container_width=True):
                             del TEMPLATE_MAPS[selected_template]
                             save_template_maps(TEMPLATE_MAPS)
-                            st.success("✅ Rimosso!")
+                            st.success("✅ Calibrazione rimossa!")
                             st.rerun()
         else:
             st.info(f"Nessun template in {cat_choice}")
@@ -629,10 +570,9 @@ elif menu == "⚡ Produzione":
             st.session_state.uploader_key += 1
             st.rerun()
 
-    # Anteprima
     st.subheader(f"🔍 Anteprima {scelta}")
     preview_design = st.file_uploader(
-        f"Carica design per anteprima", 
+        f"Carica design per anteprima",
         type=['jpg', 'jpeg', 'png'],
         key='preview_uploader'
     )
@@ -661,10 +601,9 @@ elif menu == "⚡ Produzione":
         
         st.divider()
 
-    # Produzione batch
     disegni = st.file_uploader(
-        f"Carica design {scelta} per batch", 
-        accept_multiple_files=True, 
+        f"Carica design {scelta} per batch",
+        accept_multiple_files=True,
         key=f"up_{st.session_state.uploader_key}"
     )
 
