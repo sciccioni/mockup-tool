@@ -6,18 +6,20 @@ import io
 import zipfile
 
 # --- 1. SETUP E COORDINATE DEFINITIVE ---
-st.set_page_config(page_title="PhotoBook Master Pro V5.2", layout="wide")
+st.set_page_config(page_title="PhotoBook Master Pro V5.3", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
+        # Template Piatti (100% statici)
         "base_copertina_verticale.jpg": [0.0, 0.0, 100.0, 100.0],
         "base_copertina_orizzontale.jpg": [0.0, 0.0, 100.0, 100.0],
+        # Template App (Coordinate calibrate)
         "base_verticale_temi_app.jpg": [34.6, 9.2, 30.2, 80.3],
         "base_bottom_app.jpg": [21.9, 4.9, 56.5, 91.3],
         "base_orizzontale_temi_app.jpg": [18.9, 9.4, 61.8, 83.0],
         "base_orizzontale_temi_app3.jpg": [18.7, 9.4, 62.2, 82.6],
         "base_quadrata_temi_app.jpg": [27.8, 10.8, 44.5, 79.0],
-        "30x30-crea la tua grafica.jpg": [0.0, 0.0, 100.0, 100.0], 
+        # IL 30x30 È STATO RIMOSSO DA QUI COSÌ NON È PIÙ STATICO
     }
 
 if 'uploader_key' not in st.session_state:
@@ -38,12 +40,17 @@ def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
     tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
     h, w, _ = tmpl_rgb.shape
     
+    is_static_cover = False
+    
     if t_name in st.session_state.coords:
         px, py, pw, ph = st.session_state.coords[t_name]
         x1, y1 = int((px * w) / 100), int((py * h) / 100)
         tw, th = int((pw * w) / 100), int((ph * h) / 100)
         face_val = 255.0
+        if px == 0.0 and py == 0.0 and pw == 100.0 and ph == 100.0:
+            is_static_cover = True
     else:
+        # Fallback automatico
         corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
         bg_val = np.median(corners)
         book_mask = tmpl_gray > (bg_val + 3)
@@ -59,8 +66,11 @@ def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
     alpha = np.array(f_mask).astype(np.float64) / 255.0
     alpha = np.expand_dims(alpha, axis=2)
 
-    shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / face_val, 0.0, 1.0)
-    shadow_map = np.expand_dims(shadow_map, axis=2)
+    if is_static_cover:
+        shadow_map = np.ones((th, tw, 1), dtype=np.float64)
+    else:
+        shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / face_val, 0.0, 1.0)
+        shadow_map = np.expand_dims(shadow_map, axis=2)
 
     orig_area = tmpl_rgb[y1:y1+th, x1:x1+tw]
     blended = ((cover_res * shadow_map) * alpha) + (orig_area * (1 - alpha))
@@ -71,15 +81,9 @@ def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
 
 def get_manual_cat(filename):
     fn = filename.lower()
-    # VERTICALI
-    if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]): 
-        return "Verticali"
-    # ORIZZONTALI (Aggiunti 32x24 e 40x30)
-    if any(x in fn for x in ["orizzontale", "20x15", "27x20", "32x24", "40x30"]): 
-        return "Orizzontali"
-    # QUADRATI
-    if any(x in fn for x in ["quadrata", "20x20", "30x30", "crea la tua grafica"]): 
-        return "Quadrati"
+    if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]): return "Verticali"
+    if any(x in fn for x in ["orizzontale", "20x15", "27x20", "32x24", "40x30"]): return "Orizzontali"
+    if any(x in fn for x in ["quadrata", "20x20", "30x30", "crea la tua grafica"]): return "Quadrati"
     return "Altro"
 
 @st.cache_data(show_spinner=False)
@@ -98,7 +102,7 @@ def load_lib():
 libreria = load_lib()
 
 # --- 3. INTERFACCIA ---
-st.title("📖 PhotoBook Master V5.2")
+st.title("📖 PhotoBook Master V5.3")
 
 with st.sidebar:
     st.header("📊 Stato Libreria")
