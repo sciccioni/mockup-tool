@@ -2,30 +2,10 @@ import streamlit as st
 import numpy as np
 from PIL import Image, ImageDraw
 
-st.set_page_config(layout="wide", page_title="Calibratore Ottico V2")
+st.set_page_config(layout="wide", page_title="Calibratore Pro V2.5")
 
-# --- FUNZIONI DI SUPPORTO ---
-def get_initial_guess(tmpl_pil, tolerance=15):
-    """Fa una stima iniziale basata sul contrasto col colore di sfondo."""
-    gray = tmpl_pil.convert('L')
-    arr = np.array(gray)
-    h, w = arr.shape
-    # Colore medio degli angoli
-    bg_val = np.median([arr[:5, :5], arr[:5, -5:], arr[-5:, :5], arr[-5:, -5:]])
-    mask = np.abs(arr - bg_val) > tolerance
-    coords = np.argwhere(mask)
-    if coords.size == 0: return 10.0, 10.0, 80.0, 80.0 # Fallback
-    y1, x1 = coords.min(axis=0)
-    y2, x2 = coords.max(axis=0)
-    # Conversione in percentuali con un piccolo margine interno (-1%)
-    px = max(0, round((x1 / w) * 100, 1) + 0.5)
-    py = max(0, round((y1 / h) * 100, 1) + 0.5)
-    pw = min(100, round(((x2 - x1) / w) * 100, 1) - 1.0)
-    ph = min(100, round(((y2 - y1) / h) * 100, 1) - 1.0)
-    return px, py, pw, ph
-
-def create_preview(tmpl_img, cover_img, coords):
-    """Disegna il rettangolo e, se c'è, la cover."""
+# --- MOTORE DI RENDERING ---
+def create_clean_preview(tmpl_img, cover_img, coords, show_border):
     preview = tmpl_img.convert('RGB').copy()
     draw = ImageDraw.Draw(preview)
     w_f, h_f = preview.size
@@ -36,67 +16,54 @@ def create_preview(tmpl_img, cover_img, coords):
     x2, y2 = x1 + tw, y1 + th
 
     if cover_img:
-        # Se c'è una cover, la ridimensioniamo e la incolliamo dentro
-        cover_resized = cover_img.convert('RGB').resize((tw, th), Image.LANCZOS)
-        # Usiamo una maschera per far vedere un po' sotto (opzionale, per ora incolliamo solido)
-        preview.paste(cover_resized, (x1, y1))
-        # Disegniamo il bordo rosso SOPRA la cover per controllo
-        draw.rectangle([x1, y1, x2, y2], outline="red", width=5)
-    else:
-        # Solo rettangolo rosso spesso se non c'è cover
-        draw.rectangle([x1, y1, x2, y2], outline="red", width=8)
+        # Incolliamo la cover con resize di alta qualità
+        cover_res = cover_img.convert('RGB').resize((tw, th), Image.LANCZOS)
+        preview.paste(cover_res, (x1, y1))
+    
+    # Il bordo rosso compare SOLO se lo attivi tu
+    if show_border:
+        draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
         
     return preview
 
 # --- INTERFACCIA ---
-st.title("🎯 Calibratore Ottico di Precisione")
-st.write("1. Carica il template. 2. Regola i cursori finché il rettangolo rosso non è PERFETTO. 3. (Opzionale) Carica una cover per testare.")
+st.title("🎯 Calibrazione Millimetrica Senza Distrazioni")
 
-# Session State per mantenere i valori tra i ricaricamenti
-if 'manual_coords' not in st.session_state:
-    st.session_state.manual_coords = [10.0, 10.0, 80.0, 80.0]
-if 'last_template' not in st.session_state:
-    st.session_state.last_template = None
+# Setup dello stato per non perdere i dati
+if 'coords' not in st.session_state:
+    st.session_state.coords = [15.0, 15.0, 70.0, 70.0]
 
-col_controls, col_preview = st.columns([1, 2])
+col_ctrl, col_view = st.columns([1, 3]) # Colonna preview più grande
 
-with col_controls:
-    st.subheader("1. Upload")
-    up_tmpl = st.file_uploader("Carica Template (JPG)", type=['jpg', 'jpeg', 'png'], key="tmpl_up")
-    up_cover = st.file_uploader("Carica Cover di Test (Opzionale)", type=['jpg', 'png'], key="cover_up")
-
-    st.subheader("2. Regolazione Manuale")
-    # Se carica un nuovo template, resetta la stima iniziale
-    if up_tmpl and up_tmpl.name != st.session_state.last_template:
-        img_tmpl_pil = Image.open(up_tmpl)
-        st.session_state.manual_coords = list(get_initial_guess(img_tmpl_pil))
-        st.session_state.last_template = up_tmpl.name
-        st.rerun()
-
-    # SLIDER DI CONTROLLO DIRETTO
-    px = st.slider("→ Sposta X (Inizio Orizzontale %)", 0.0, 100.0, st.session_state.manual_coords[0], 0.1)
-    py = st.slider("↓ Sposta Y (Inizio Verticale %)", 0.0, 100.0, st.session_state.manual_coords[1], 0.1)
-    pw = st.slider("↔ Larghezza Totale (%)", 0.0, 100.0, st.session_state.manual_coords[2], 0.1)
-    ph = st.slider("↕ Altezza Totale (%)", 0.0, 100.0, st.session_state.manual_coords[3], 0.1)
+with col_ctrl:
+    st.subheader("1. File")
+    up_t = st.file_uploader("Template", type=['jpg', 'png'], key="t")
+    up_c = st.file_uploader("Cover di Test", type=['jpg', 'png'], key="c")
     
-    # Aggiorna lo stato con i valori degli slider
-    current_coords = [px, py, pw, ph]
+    st.divider()
+    st.subheader("2. Regolazione")
+    
+    # Interruttore per il bordo
+    border_on = st.checkbox("Mostra rettangolo guida", value=False)
+    
+    # Sliders per il posizionamento
+    st.session_state.coords[0] = st.slider("X (Orizzontale)", 0.0, 100.0, st.session_state.coords[0], 0.1)
+    st.session_state.coords[1] = st.slider("Y (Verticale)", 0.0, 100.0, st.session_state.coords[1], 0.1)
+    st.session_state.coords[2] = st.slider("Larghezza (W)", 0.0, 100.0, st.session_state.coords[2], 0.1)
+    st.session_state.coords[3] = st.slider("Altezza (H)", 0.0, 100.0, st.session_state.coords[3], 0.1)
+    
+    st.divider()
+    st.subheader("3. Codice")
+    if up_t:
+        st.code(f"'{up_t.name}': {st.session_state.coords},")
 
-    st.subheader("3. Risultato Finale")
-    st.write("Copia questa riga nel tuo dizionario `TEMPLATE_MAPS`:")
-    if up_tmpl:
-        st.code(f"'{up_tmpl.name}': {current_coords},", language="python")
-    else:
-        st.code("'nome_file.jpg': [X, Y, W, H],")
-
-with col_preview:
-    st.subheader("Anteprima in Tempo Reale")
-    if up_tmpl:
-        img_tmpl = Image.open(up_tmpl)
-        img_cover = Image.open(up_cover) if up_cover else None
+with col_view:
+    if up_t:
+        img_t = Image.open(up_t)
+        img_c = Image.open(up_c) if up_c else None
         
-        # Genera l'anteprima visiva
-        preview_img = create_preview(img_tmpl, img_cover, current_coords)
-        st.image(preview_img, use_column_width=True)
+        # Genera l'immagine finale pulita
+        res = create_clean_preview(img_t, img_c, st.session_state.coords, border_on)
+        st.image(res, use_container_width=True) # Dimensione massima possibile
     else:
-        st.info("Carica un template a sinistra per iniziare.")
+        st.info("Carica un template per iniziare la calibrazione.")
