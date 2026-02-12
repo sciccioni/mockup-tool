@@ -4,6 +4,7 @@ from PIL import Image
 import os
 import io
 import zipfile
+import json
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FIXED", layout="wide")
@@ -12,13 +13,34 @@ if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
 # --- MAPPING COORDINATE PER TEMPLATE APP ---
-TEMPLATE_MAPS = {
-    "base_verticale_temi_app.jpg": (35.1, 10.4, 29.8, 79.2),
-    "base_orizzontale_temi_app.jpg": (19.4, 9.4, 61.2, 81.2),
-    "base_orizzontale_temi_app3.jpg": (19.4, 9.4, 61.2, 81.2),
-    "base_quadrata_temi_app.jpg": (28.2, 10.4, 43.6, 77.4),
-    "base_bottom_app.jpg": (22.8, 4.4, 54.8, 89.6),
-}
+TEMPLATE_MAPS_FILE = "template_coordinates.json"
+
+def load_template_maps():
+    """Carica le coordinate da file JSON o usa quelle di default"""
+    default_maps = {
+        "base_verticale_temi_app.jpg": (35.1, 10.4, 29.8, 79.2),
+        "base_orizzontale_temi_app.jpg": (19.4, 9.4, 61.2, 81.2),
+        "base_orizzontale_temi_app3.jpg": (19.4, 9.4, 61.2, 81.2),
+        "base_quadrata_temi_app.jpg": (28.2, 10.4, 43.6, 77.4),
+        "base_bottom_app.jpg": (22.8, 4.4, 54.8, 89.6),
+    }
+    
+    if os.path.exists(TEMPLATE_MAPS_FILE):
+        try:
+            with open(TEMPLATE_MAPS_FILE, 'r') as f:
+                loaded = json.load(f)
+                # Converte le liste in tuple
+                return {k: tuple(v) for k, v in loaded.items()}
+        except:
+            return default_maps
+    return default_maps
+
+def save_template_maps(maps):
+    """Salva le coordinate nel file JSON"""
+    with open(TEMPLATE_MAPS_FILE, 'w') as f:
+        json.dump(maps, f, indent=2)
+
+TEMPLATE_MAPS = load_template_maps()
 
 # --- SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
@@ -238,6 +260,27 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
+def draw_overlay_box(img_pil, px, py, pw, ph):
+    """Disegna un rettangolo rosso semi-trasparente sull'immagine per mostrare l'area"""
+    from PIL import ImageDraw
+    img = img_pil.copy()
+    overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
+    
+    w, h = img.size
+    x1 = int((px * w) / 100)
+    y1 = int((py * h) / 100)
+    x2 = x1 + int((pw * w) / 100)
+    y2 = y1 + int((ph * h) / 100)
+    
+    # Rettangolo rosso semi-trasparente
+    draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0, 255), width=3)
+    
+    # Converti in RGB per la visualizzazione
+    img = img.convert('RGBA')
+    combined = Image.alpha_composite(img, overlay)
+    return combined.convert('RGB')
+
 # --- CARICAMENTO ---
 @st.cache_data
 def load_fixed_templates():
@@ -289,88 +332,197 @@ libreria, thumbnails = get_template_thumbnails()
 # --- INTERFACCIA ---
 st.title("📖 PhotoBook Mockup Compositor - V3 Fixed (No White Lines)")
 
-if st.button("🔄 RICARICA TEMPLATES"):
-    st.cache_data.clear()
-    st.rerun()
+# --- MENU PRINCIPALE ---
+menu = st.sidebar.radio("Menu", ["📚 Templates", "🎯 Calibrazione Coordinate", "⚡ Produzione"])
 
-tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
-for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
-    with tab:
-        items = thumbnails[name]
-        if not items: st.info("Templates non trovati.")
-        else:
-            cols = st.columns(4)
-            for idx, (fname, thumb) in enumerate(items.items()):
-                cols[idx % 4].image(thumb, caption=fname, use_column_width=True)
-
-st.divider()
-
-# --- SEZIONE PRODUZIONE ---
-st.subheader("⚡ Produzione")
-col_sel, col_del = st.columns([3, 1])
-with col_sel:
-    scelta = st.radio("Seleziona formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-with col_del:
-    if st.button("🗑️ SVUOTA DESIGN"):
-        st.session_state.uploader_key += 1
+if menu == "📚 Templates":
+    if st.button("🔄 RICARICA TEMPLATES"):
+        st.cache_data.clear()
         st.rerun()
 
-# --- ANTEPRIMA PER IL FORMATO SELEZIONATO ---
-st.subheader(f"🔍 Anteprima Design per formato {scelta}")
-preview_design = st.file_uploader(
-    f"Carica un design per vedere l'anteprima su tutti i template {scelta}", 
-    type=['jpg', 'jpeg', 'png'],
-    key='preview_uploader'
-)
+    tabs = st.tabs(["Verticali", "Orizzontali", "Quadrati"])
+    for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
+        with tab:
+            items = thumbnails[name]
+            if not items: st.info("Templates non trovati.")
+            else:
+                cols = st.columns(4)
+                for idx, (fname, thumb) in enumerate(items.items()):
+                    cols[idx % 4].image(thumb, caption=fname, use_column_width=True)
 
-if preview_design:
-    d_img = Image.open(preview_design)
-    st.info(f"Design caricato: {preview_design.name}")
+elif menu == "🎯 Calibrazione Coordinate":
+    st.header("🎯 Calibrazione Coordinate Template")
+    st.info("Usa questo tool per regolare le coordinate dei template che usano il metodo PRECISION")
     
-    target_tmpls = libreria[scelta]
+    # Seleziona template da calibrare
+    template_names = list(TEMPLATE_MAPS.keys())
+    selected_template = st.selectbox("Seleziona template da calibrare:", template_names)
     
-    if not target_tmpls:
-        st.warning(f"Nessun template {scelta} disponibile.")
-    else:
-        cols = st.columns(4)
-        for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
-            with cols[idx % 4]:
-                with st.spinner(f"Generando {t_name}..."):
-                    result = composite_v3_fixed(t_img, d_img, t_name)
-                    if result:
-                        st.image(result, caption=t_name, use_column_width=True)
-                    else:
-                        st.error(f"Errore: {t_name}")
-    
-    st.divider()
+    if selected_template:
+        # Carica il template
+        cat = get_manual_cat(selected_template)
+        if cat in libreria and selected_template in libreria[cat]:
+            template_img = libreria[cat][selected_template]
+            
+            # Coordinate attuali
+            current_coords = TEMPLATE_MAPS[selected_template]
+            px, py, pw, ph = current_coords
+            
+            st.subheader("Coordinate Attuali")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("X (%)", f"{px:.1f}")
+            with col2:
+                st.metric("Y (%)", f"{py:.1f}")
+            with col3:
+                st.metric("Width (%)", f"{pw:.1f}")
+            with col4:
+                st.metric("Height (%)", f"{ph:.1f}")
+            
+            st.divider()
+            
+            # Sliders per modificare le coordinate
+            st.subheader("Modifica Coordinate")
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                new_px = st.slider("X Position (%)", 0.0, 100.0, px, 0.1, key='px')
+                new_pw = st.slider("Width (%)", 1.0, 100.0, pw, 0.1, key='pw')
+            with col_b:
+                new_py = st.slider("Y Position (%)", 0.0, 100.0, py, 0.1, key='py')
+                new_ph = st.slider("Height (%)", 1.0, 100.0, ph, 0.1, key='ph')
+            
+            st.divider()
+            
+            # Visualizzazione
+            st.subheader("Anteprima Area (rettangolo rosso)")
+            overlay_img = draw_overlay_box(template_img, new_px, new_py, new_pw, new_ph)
+            st.image(overlay_img, use_column_width=True)
+            
+            # Test con design
+            st.divider()
+            st.subheader("Test con Design")
+            test_design = st.file_uploader("Carica un design per testare le coordinate", type=['jpg', 'jpeg', 'png'])
+            
+            if test_design:
+                design_img = Image.open(test_design)
+                
+                # Crea coordinate temporanee
+                temp_maps = TEMPLATE_MAPS.copy()
+                temp_maps[selected_template] = (new_px, new_py, new_pw, new_ph)
+                
+                # Salva temporaneamente
+                old_maps = TEMPLATE_MAPS.copy()
+                TEMPLATE_MAPS.update(temp_maps)
+                
+                # Genera anteprima
+                result = composite_v3_fixed(template_img, design_img, selected_template)
+                
+                # Ripristina
+                TEMPLATE_MAPS.update(old_maps)
+                
+                if result:
+                    col_before, col_after = st.columns(2)
+                    with col_before:
+                        st.write("**Template Originale**")
+                        st.image(template_img, use_column_width=True)
+                    with col_after:
+                        st.write("**Con Design Applicato**")
+                        st.image(result, use_column_width=True)
+            
+            st.divider()
+            
+            # Pulsanti di azione
+            col_save, col_reset = st.columns(2)
+            with col_save:
+                if st.button("💾 SALVA COORDINATE", type="primary"):
+                    TEMPLATE_MAPS[selected_template] = (new_px, new_py, new_pw, new_ph)
+                    save_template_maps(TEMPLATE_MAPS)
+                    st.success(f"✅ Coordinate salvate per {selected_template}!")
+                    st.balloons()
+            
+            with col_reset:
+                if st.button("🔄 RESET AI VALORI DEFAULT"):
+                    default_maps = {
+                        "base_verticale_temi_app.jpg": (35.1, 10.4, 29.8, 79.2),
+                        "base_orizzontale_temi_app.jpg": (19.4, 9.4, 61.2, 81.2),
+                        "base_orizzontale_temi_app3.jpg": (19.4, 9.4, 61.2, 81.2),
+                        "base_quadrata_temi_app.jpg": (28.2, 10.4, 43.6, 77.4),
+                        "base_bottom_app.jpg": (22.8, 4.4, 54.8, 89.6),
+                    }
+                    TEMPLATE_MAPS[selected_template] = default_maps[selected_template]
+                    save_template_maps(TEMPLATE_MAPS)
+                    st.success("✅ Coordinate resettate ai valori di default!")
+                    st.rerun()
+        else:
+            st.error(f"Template {selected_template} non trovato nella libreria!")
 
-# --- CARICAMENTO MULTIPLO PER PRODUZIONE ---
-disegni = st.file_uploader(
-    f"Carica design {scelta} per produzione batch", 
-    accept_multiple_files=True, 
-    key=f"up_{st.session_state.uploader_key}"
-)
+elif menu == "⚡ Produzione":
+    st.subheader("⚡ Produzione")
+    col_sel, col_del = st.columns([3, 1])
+    with col_sel:
+        scelta = st.radio("Seleziona formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+    with col_del:
+        if st.button("🗑️ SVUOTA DESIGN"):
+            st.session_state.uploader_key += 1
+            st.rerun()
 
-if st.button("🚀 GENERA TUTTI"):
-    if not disegni or not libreria[scelta]:
-        st.error("Mancano i file!")
-    else:
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-            bar = st.progress(0)
-            target_tmpls = libreria[scelta]
-            total = len(disegni) * len(target_tmpls)
-            count = 0
-            for d_file in disegni:
-                d_img = Image.open(d_file)
-                d_name = os.path.splitext(d_file.name)[0]
-                for t_name, t_img in target_tmpls.items():
-                    res = composite_v3_fixed(t_img, d_img, t_name)
-                    if res:
-                        buf = io.BytesIO()
-                        res.save(buf, format='JPEG', quality=95, subsampling=0)
-                        zip_file.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
-                    count += 1
-                    bar.progress(count / total)
-        st.success("✅ Completato!")
-        st.download_button("📥 SCARICA ZIP", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}.zip")
+    # --- ANTEPRIMA PER IL FORMATO SELEZIONATO ---
+    st.subheader(f"🔍 Anteprima Design per formato {scelta}")
+    preview_design = st.file_uploader(
+        f"Carica un design per vedere l'anteprima su tutti i template {scelta}", 
+        type=['jpg', 'jpeg', 'png'],
+        key='preview_uploader'
+    )
+
+    if preview_design:
+        d_img = Image.open(preview_design)
+        st.info(f"Design caricato: {preview_design.name}")
+        
+        target_tmpls = libreria[scelta]
+        
+        if not target_tmpls:
+            st.warning(f"Nessun template {scelta} disponibile.")
+        else:
+            cols = st.columns(4)
+            for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
+                with cols[idx % 4]:
+                    with st.spinner(f"Generando {t_name}..."):
+                        result = composite_v3_fixed(t_img, d_img, t_name)
+                        if result:
+                            st.image(result, caption=t_name, use_column_width=True)
+                        else:
+                            st.error(f"Errore: {t_name}")
+        
+        st.divider()
+
+    # --- CARICAMENTO MULTIPLO PER PRODUZIONE ---
+    disegni = st.file_uploader(
+        f"Carica design {scelta} per produzione batch", 
+        accept_multiple_files=True, 
+        key=f"up_{st.session_state.uploader_key}"
+    )
+
+    if st.button("🚀 GENERA TUTTI"):
+        if not disegni or not libreria[scelta]:
+            st.error("Mancano i file!")
+        else:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                bar = st.progress(0)
+                target_tmpls = libreria[scelta]
+                total = len(disegni) * len(target_tmpls)
+                count = 0
+                for d_file in disegni:
+                    d_img = Image.open(d_file)
+                    d_name = os.path.splitext(d_file.name)[0]
+                    for t_name, t_img in target_tmpls.items():
+                        res = composite_v3_fixed(t_img, d_img, t_name)
+                        if res:
+                            buf = io.BytesIO()
+                            res.save(buf, format='JPEG', quality=95, subsampling=0)
+                            zip_file.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
+                        count += 1
+                        bar.progress(count / total)
+            st.success("✅ Completato!")
+            st.download_button("📥 SCARICA ZIP", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}.zip")
