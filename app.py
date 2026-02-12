@@ -648,7 +648,8 @@ elif menu == "⚡ Produzione":
         key=f"up_{st.session_state.uploader_key}"
     )
 
-    if st.button("🚀 GENERA TUTTI"):
+    # Bottone per avviare la generazione
+    if st.button("🚀 GENERA TUTTI", type="primary"):
         if not disegni or not libreria[scelta]:
             st.error("Mancano i file!")
         else:
@@ -658,9 +659,13 @@ elif menu == "⚡ Produzione":
                 target_tmpls = libreria[scelta]
                 total = len(disegni) * len(target_tmpls)
                 count = 0
+                
                 for d_file in disegni:
+                    # Reset pointer for multiple reads if needed, though here we open new image
+                    d_file.seek(0) 
                     d_img = Image.open(d_file)
                     d_name = os.path.splitext(d_file.name)[0]
+                    
                     for t_name, t_img in target_tmpls.items():
                         res = composite_v3_fixed(t_img, d_img, t_name)
                         if res:
@@ -669,5 +674,19 @@ elif menu == "⚡ Produzione":
                             zip_file.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
                         count += 1
                         bar.progress(count / total)
-            st.success("✅ Completato!")
-            st.download_button("📥 SCARICA ZIP", data=zip_buf.getvalue(), file_name=f"Mockups_{scelta}.zip")
+            
+            # SALVARE IL RISULTATO IN SESSION_STATE
+            st.session_state['zip_ready'] = True
+            st.session_state['zip_data'] = zip_buf.getvalue()
+            st.session_state['zip_name'] = f"Mockups_{scelta}.zip"
+            st.success("✅ Completato! Ora puoi scaricare.")
+
+    # MOSTRARE IL PULSANTE DI DOWNLOAD FUORI DAL BLOCCO DEL BOTTONE DI GENERAZIONE
+    if st.session_state.get('zip_ready', False):
+        st.download_button(
+            label="📥 SCARICA ZIP",
+            data=st.session_state['zip_data'],
+            file_name=st.session_state['zip_name'],
+            mime="application/zip",
+            key="download_btn"
+        )
