@@ -100,7 +100,7 @@ def find_book_region(tmpl_gray, bg_val):
         'face_val': face_val,
     }
 
-def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
+def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=1):
     # Carichiamo tutto in RGB
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = (0.299 * tmpl_rgb[:,:,0] + 0.587 * tmpl_rgb[:,:,1] + 0.114 * tmpl_rgb[:,:,2])
@@ -110,8 +110,12 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     # --- LOGICA PRECISION PER TEMPLATE APP (COORDINATE ESATTE) ---
     if template_name in TEMPLATE_MAPS:
         px, py, pw, ph = TEMPLATE_MAPS[template_name]
-        x1, y1 = int((px * w) / 100), int((py * h) / 100)
-        tw, th = int((pw * w) / 100), int((ph * h) / 100)
+        
+        # OFFSET: aggiungi pixel di sfocatura sui bordi
+        x1 = int((px * w) / 100) + border_offset
+        y1 = int((py * h) / 100) + border_offset
+        tw = int((pw * w) / 100) - (border_offset * 2)
+        th = int((ph * h) / 100) - (border_offset * 2)
         
         # Resize della cover
         cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
@@ -119,7 +123,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         # Shadow Map (Multiply blend mode) - USA GRAYSCALE A 8-BIT
         tmpl_gray_u8 = np.array(tmpl_pil.convert('L')).astype(np.float64)
         book_shadows = tmpl_gray_u8[y1:y1+th, x1:x1+tw]
-        shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)  # DIVISO 255 NON 250!
+        shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
         
         # Composizione
         result = tmpl_rgb.copy()
@@ -260,26 +264,23 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-def draw_overlay_box(img_pil, px, py, pw, ph):
-    """Disegna un rettangolo rosso semi-trasparente sull'immagine per mostrare l'area"""
-    from PIL import ImageDraw
-    img = img_pil.copy()
-    overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
+def apply_test_image_to_template(template_img, test_img, px, py, pw, ph):
+    """Applica l'immagine di test sul template nelle coordinate specificate"""
+    tmpl = template_img.copy()
+    w, h = tmpl.size
     
-    w, h = img.size
     x1 = int((px * w) / 100)
     y1 = int((py * h) / 100)
-    x2 = x1 + int((pw * w) / 100)
-    y2 = y1 + int((ph * h) / 100)
+    tw = int((pw * w) / 100)
+    th = int((ph * h) / 100)
     
-    # Rettangolo rosso semi-trasparente
-    draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0, 255), width=3)
+    # Resize dell'immagine di test
+    test_resized = test_img.resize((tw, th), Image.LANCZOS)
     
-    # Converti in RGB per la visualizzazione
-    img = img.convert('RGBA')
-    combined = Image.alpha_composite(img, overlay)
-    return combined.convert('RGB')
+    # Incolla sull'immagine template
+    tmpl.paste(test_resized, (x1, y1))
+    
+    return tmpl
 
 # --- CARICAMENTO ---
 @st.cache_data
@@ -364,7 +365,7 @@ if menu == "📚 Templates":
 
 elif menu == "🎯 Calibrazione Coordinate":
     st.header("🎯 Calibrazione Coordinate Template")
-    st.info("Usa questo tool per regolare le coordinate di qualsiasi template usando il metodo PRECISION")
+    st.info("Usa questo tool per regolare le coordinate di qualsiasi template usando il metodo PRECISION.")
     
     # Ottiene TUTTI i template dalla cartella
     all_template_names = get_all_template_names()
@@ -416,42 +417,180 @@ elif menu == "🎯 Calibrazione Coordinate":
                 
                 st.divider()
                 
-                # Sliders per modificare le coordinate
+                # Initialize session state per i valori se non esistono
+                if 'cal_px' not in st.session_state:
+                    st.session_state.cal_px = px
+                if 'cal_py' not in st.session_state:
+                    st.session_state.cal_py = py
+                if 'cal_pw' not in st.session_state:
+                    st.session_state.cal_pw = pw
+                if 'cal_ph' not in st.session_state:
+                    st.session_state.cal_ph = ph
+                if 'cal_offset' not in st.session_state:
+                    st.session_state.cal_offset = 1
+                if 'test_image' not in st.session_state:
+                    st.session_state.test_image = None
+                
+                # Controlli di precisione
                 st.subheader("Modifica Coordinate")
                 
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    new_px = st.slider("X Position (%)", 0.0, 100.0, px, 0.1, key='px')
-                    new_pw = st.slider("Width (%)", 1.0, 100.0, pw, 0.1, key='pw')
-                with col_b:
-                    new_py = st.slider("Y Position (%)", 0.0, 100.0, py, 0.1, key='py')
-                    new_ph = st.slider("Height (%)", 1.0, 100.0, ph, 0.1, key='ph')
+                # Controlli X Position
+                col_x = st.columns([2, 1, 1, 6, 1, 1])
+                with col_x[0]:
+                    st.write("**X Position (%)**")
+                with col_x[1]:
+                    if st.button("−", key="x_minus", help="Decrementa X di 0.1%"):
+                        st.session_state.cal_px = max(0.0, st.session_state.cal_px - 0.1)
+                        st.rerun()
+                with col_x[2]:
+                    if st.button("+", key="x_plus", help="Incrementa X di 0.1%"):
+                        st.session_state.cal_px = min(100.0, st.session_state.cal_px + 0.1)
+                        st.rerun()
+                with col_x[3]:
+                    new_px = st.slider("X", 0.0, 100.0, st.session_state.cal_px, 0.1, key='px_slider', label_visibility="collapsed")
+                    if new_px != st.session_state.cal_px:
+                        st.session_state.cal_px = new_px
+                        st.rerun()
+                with col_x[5]:
+                    st.code(f"{st.session_state.cal_px:.1f}%")
+                
+                # Controlli Y Position
+                col_y = st.columns([2, 1, 1, 6, 1, 1])
+                with col_y[0]:
+                    st.write("**Y Position (%)**")
+                with col_y[1]:
+                    if st.button("−", key="y_minus", help="Decrementa Y di 0.1%"):
+                        st.session_state.cal_py = max(0.0, st.session_state.cal_py - 0.1)
+                        st.rerun()
+                with col_y[2]:
+                    if st.button("+", key="y_plus", help="Incrementa Y di 0.1%"):
+                        st.session_state.cal_py = min(100.0, st.session_state.cal_py + 0.1)
+                        st.rerun()
+                with col_y[3]:
+                    new_py = st.slider("Y", 0.0, 100.0, st.session_state.cal_py, 0.1, key='py_slider', label_visibility="collapsed")
+                    if new_py != st.session_state.cal_py:
+                        st.session_state.cal_py = new_py
+                        st.rerun()
+                with col_y[5]:
+                    st.code(f"{st.session_state.cal_py:.1f}%")
+                
+                # Controlli Width
+                col_w = st.columns([2, 1, 1, 6, 1, 1])
+                with col_w[0]:
+                    st.write("**Width (%)**")
+                with col_w[1]:
+                    if st.button("−", key="w_minus", help="Decrementa Width di 0.1%"):
+                        st.session_state.cal_pw = max(1.0, st.session_state.cal_pw - 0.1)
+                        st.rerun()
+                with col_w[2]:
+                    if st.button("+", key="w_plus", help="Incrementa Width di 0.1%"):
+                        st.session_state.cal_pw = min(100.0, st.session_state.cal_pw + 0.1)
+                        st.rerun()
+                with col_w[3]:
+                    new_pw = st.slider("W", 1.0, 100.0, st.session_state.cal_pw, 0.1, key='pw_slider', label_visibility="collapsed")
+                    if new_pw != st.session_state.cal_pw:
+                        st.session_state.cal_pw = new_pw
+                        st.rerun()
+                with col_w[5]:
+                    st.code(f"{st.session_state.cal_pw:.1f}%")
+                
+                # Controlli Height
+                col_h = st.columns([2, 1, 1, 6, 1, 1])
+                with col_h[0]:
+                    st.write("**Height (%)**")
+                with col_h[1]:
+                    if st.button("−", key="h_minus", help="Decrementa Height di 0.1%"):
+                        st.session_state.cal_ph = max(1.0, st.session_state.cal_ph - 0.1)
+                        st.rerun()
+                with col_h[2]:
+                    if st.button("+", key="h_plus", help="Incrementa Height di 0.1%"):
+                        st.session_state.cal_ph = min(100.0, st.session_state.cal_ph + 0.1)
+                        st.rerun()
+                with col_h[3]:
+                    new_ph = st.slider("H", 1.0, 100.0, st.session_state.cal_ph, 0.1, key='ph_slider', label_visibility="collapsed")
+                    if new_ph != st.session_state.cal_ph:
+                        st.session_state.cal_ph = new_ph
+                        st.rerun()
+                with col_h[5]:
+                    st.code(f"{st.session_state.cal_ph:.1f}%")
                 
                 st.divider()
+                
+                # Controlli Offset bordi
+                st.subheader("Offset Bordi (Sfocatura)")
+                col_off = st.columns([2, 1, 1, 6, 1, 1])
+                with col_off[0]:
+                    st.write("**Border Offset (px)**")
+                with col_off[1]:
+                    if st.button("−", key="off_minus", help="Decrementa offset di 1px"):
+                        st.session_state.cal_offset = max(0, st.session_state.cal_offset - 1)
+                        st.rerun()
+                with col_off[2]:
+                    if st.button("+", key="off_plus", help="Incrementa offset di 1px"):
+                        st.session_state.cal_offset = min(20, st.session_state.cal_offset + 1)
+                        st.rerun()
+                with col_off[3]:
+                    new_offset = st.slider("Offset", 0, 20, st.session_state.cal_offset, 1, key='off_slider', label_visibility="collapsed")
+                    if new_offset != st.session_state.cal_offset:
+                        st.session_state.cal_offset = new_offset
+                        st.rerun()
+                with col_off[5]:
+                    st.code(f"{st.session_state.cal_offset}px")
+                
+                st.divider()
+                
+                # Carica immagine di test
+                st.subheader("Immagine di Test")
+                col_upload, col_remove = st.columns([3, 1])
+                with col_upload:
+                    test_upload = st.file_uploader("Carica un'immagine per vedere l'anteprima", type=['jpg', 'jpeg', 'png'], key='test_img_upload')
+                    if test_upload:
+                        st.session_state.test_image = Image.open(test_upload)
+                
+                with col_remove:
+                    if st.session_state.test_image is not None:
+                        if st.button("🗑️ Rimuovi Immagine"):
+                            st.session_state.test_image = None
+                            st.rerun()
                 
                 # Visualizzazione
-                st.subheader("Anteprima Area (rettangolo rosso)")
-                overlay_img = draw_overlay_box(template_img, new_px, new_py, new_pw, new_ph)
-                st.image(overlay_img, use_column_width=True)
-                
-                # Test con design
                 st.divider()
-                st.subheader("Test con Design")
-                test_design = st.file_uploader("Carica un design per testare le coordinate", type=['jpg', 'jpeg', 'png'])
+                st.subheader("Anteprima")
+                
+                if st.session_state.test_image is not None:
+                    # Mostra l'anteprima con l'immagine di test
+                    preview_img = apply_test_image_to_template(
+                        template_img, 
+                        st.session_state.test_image,
+                        st.session_state.cal_px, 
+                        st.session_state.cal_py, 
+                        st.session_state.cal_pw, 
+                        st.session_state.cal_ph
+                    )
+                    st.image(preview_img, caption="Anteprima con immagine di test", use_column_width=True)
+                else:
+                    st.info("Carica un'immagine di test per vedere l'anteprima")
+                    st.image(template_img, caption="Template originale", use_column_width=True)
+                
+                # Test con design reale
+                st.divider()
+                st.subheader("Test Rendering Completo")
+                test_design = st.file_uploader("Carica un design per testare il rendering finale", type=['jpg', 'jpeg', 'png'], key='final_test')
                 
                 if test_design:
                     design_img = Image.open(test_design)
                     
                     # Crea coordinate temporanee
                     temp_maps = TEMPLATE_MAPS.copy()
-                    temp_maps[selected_template] = (new_px, new_py, new_pw, new_ph)
+                    temp_maps[selected_template] = (st.session_state.cal_px, st.session_state.cal_py, 
+                                                    st.session_state.cal_pw, st.session_state.cal_ph)
                     
                     # Salva temporaneamente
                     old_maps = TEMPLATE_MAPS.copy()
                     TEMPLATE_MAPS.update(temp_maps)
                     
-                    # Genera anteprima
-                    result = composite_v3_fixed(template_img, design_img, selected_template)
+                    # Genera anteprima con offset
+                    result = composite_v3_fixed(template_img, design_img, selected_template, st.session_state.cal_offset)
                     
                     # Ripristina
                     TEMPLATE_MAPS.update(old_maps)
@@ -462,7 +601,7 @@ elif menu == "🎯 Calibrazione Coordinate":
                             st.write("**Template Originale**")
                             st.image(template_img, use_column_width=True)
                         with col_after:
-                            st.write("**Con Design Applicato**")
+                            st.write(f"**Con Design Applicato (Offset: {st.session_state.cal_offset}px)**")
                             st.image(result, use_column_width=True)
                 
                 st.divider()
@@ -471,10 +610,11 @@ elif menu == "🎯 Calibrazione Coordinate":
                 col_save, col_remove = st.columns(2)
                 with col_save:
                     if st.button("💾 SALVA COORDINATE", type="primary"):
-                        TEMPLATE_MAPS[selected_template] = (new_px, new_py, new_pw, new_ph)
+                        TEMPLATE_MAPS[selected_template] = (st.session_state.cal_px, st.session_state.cal_py, 
+                                                            st.session_state.cal_pw, st.session_state.cal_ph)
                         save_template_maps(TEMPLATE_MAPS)
                         st.success(f"✅ Coordinate salvate per {selected_template}!")
-                        st.info("Ora questo template userà il metodo PRECISION con le coordinate personalizzate.")
+                        st.info(f"Ora questo template userà il metodo PRECISION con offset {st.session_state.cal_offset}px sui bordi.")
                         st.balloons()
                 
                 with col_remove:
@@ -489,6 +629,11 @@ elif menu == "🎯 Calibrazione Coordinate":
 
 elif menu == "⚡ Produzione":
     st.subheader("⚡ Produzione")
+    
+    # Controllo globale offset
+    st.sidebar.subheader("⚙️ Impostazioni Globali")
+    global_offset = st.sidebar.slider("Border Offset (px)", 0, 20, 1, 1, help="Offset bordi per tutti i template PRECISION")
+    
     col_sel, col_del = st.columns([3, 1])
     with col_sel:
         scelta = st.radio("Seleziona formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
@@ -507,7 +652,7 @@ elif menu == "⚡ Produzione":
 
     if preview_design:
         d_img = Image.open(preview_design)
-        st.info(f"Design caricato: {preview_design.name}")
+        st.info(f"Design caricato: {preview_design.name} | Offset bordi: {global_offset}px")
         
         target_tmpls = libreria[scelta]
         
@@ -518,7 +663,7 @@ elif menu == "⚡ Produzione":
             for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
                 with cols[idx % 4]:
                     with st.spinner(f"Generando {t_name}..."):
-                        result = composite_v3_fixed(t_img, d_img, t_name)
+                        result = composite_v3_fixed(t_img, d_img, t_name, global_offset)
                         if result:
                             # Mostra badge se usa PRECISION
                             if t_name in TEMPLATE_MAPS:
@@ -550,7 +695,7 @@ elif menu == "⚡ Produzione":
                     d_img = Image.open(d_file)
                     d_name = os.path.splitext(d_file.name)[0]
                     for t_name, t_img in target_tmpls.items():
-                        res = composite_v3_fixed(t_img, d_img, t_name)
+                        res = composite_v3_fixed(t_img, d_img, t_name, global_offset)
                         if res:
                             buf = io.BytesIO()
                             res.save(buf, format='JPEG', quality=95, subsampling=0)
