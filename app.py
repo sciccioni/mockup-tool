@@ -28,7 +28,7 @@ def get_manual_cat(filename):
     return "Altro"
 
 # ===================================================================
-# LOGICA V3 FIXED - ANTI WHITE LINE (OVER-BLEEDING)
+# LOGICA V3 FIXED
 # ===================================================================
 
 def find_book_region(tmpl_gray, bg_val):
@@ -107,15 +107,16 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         # 4. APPLICAZIONE OMBRE (MULTIPLY)
         # Usiamo l'area del libro originale come mappa per le ombre (rilegatura, pieghe)
         book_area_gray = tmpl_gray[y1:y2+1, x1:x2+1]
+        
+        # Normalizziamo a 255 per la moltiplicazione (Multiply blend mode)
         shadow_map = np.clip(book_area_gray / 255.0, 0, 1.0)
         
         for c in range(3):
-            # Inseriamo la copertina solo nelle coordinate del libro
-            # moltiplicandola per shadow_map così si vedono le ombre della rilegatura
+            # Moltiplichiamo i pixel della cover per le ombre originali del libro
             result[y1:y2+1, x1:x2+1, c] = cover_res[:, :, c] * shadow_map
             
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
-    
+
     # --- LOGICA PER ALTRI TEMPLATE (MANTIENI QUELLA CHE FUNZIONA) ---
     corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
     bg_val = float(np.median(corners))
@@ -248,6 +249,38 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
+# --- CARICAMENTO ---
+@st.cache_data
+def load_fixed_templates():
+    lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
+    base_path = "templates"
+    
+    if not os.path.exists(base_path):
+        return lib
+    
+    for f_name in os.listdir(base_path):
+        if f_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+            cat = get_manual_cat(f_name)
+            if cat in lib:
+                try:
+                    img = Image.open(os.path.join(base_path, f_name)).convert('RGB')
+                    lib[cat][f_name] = img
+                except:
+                    pass
+    
+    return lib
+
+@st.cache_data
+def get_template_thumbnails():
+    lib = load_fixed_templates()
+    thumbs = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
+    thumb_width, thumb_height = 300, 300
+    
+    for cat in lib:
+        for fname, img in lib[cat].items():
+            thumb = Image.new('RGB', (thumb_width, thumb_height), (240, 240, 240))
+            img_aspect = img.width / img.height
+            thumb_aspect = thumb_width / thumb_height
             
             if img_aspect > thumb_aspect:
                 new_width = thumb_width
