@@ -264,23 +264,31 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=1):
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-def apply_test_image_to_template(template_img, test_img, px, py, pw, ph):
-    """Applica l'immagine di test sul template nelle coordinate specificate"""
-    tmpl = template_img.copy()
-    w, h = tmpl.size
+def apply_test_image_blended(template_img, test_img, px, py, pw, ph, border_offset=1):
+    """Applica l'immagine di test sul template con multiply blend come nel rendering finale"""
+    tmpl_rgb = np.array(template_img.convert('RGB')).astype(np.float64)
+    h, w, _ = tmpl_rgb.shape
     
-    x1 = int((px * w) / 100)
-    y1 = int((py * h) / 100)
-    tw = int((pw * w) / 100)
-    th = int((ph * h) / 100)
+    # Calcola coordinate con offset
+    x1 = int((px * w) / 100) + border_offset
+    y1 = int((py * h) / 100) + border_offset
+    tw = int((pw * w) / 100) - (border_offset * 2)
+    th = int((ph * h) / 100) - (border_offset * 2)
     
     # Resize dell'immagine di test
-    test_resized = test_img.resize((tw, th), Image.LANCZOS)
+    test_resized = np.array(test_img.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
     
-    # Incolla sull'immagine template
-    tmpl.paste(test_resized, (x1, y1))
+    # Shadow Map (Multiply blend mode)
+    tmpl_gray_u8 = np.array(template_img.convert('L')).astype(np.float64)
+    book_shadows = tmpl_gray_u8[y1:y1+th, x1:x1+tw]
+    shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
     
-    return tmpl
+    # Composizione con multiply blend
+    result = tmpl_rgb.copy()
+    for c in range(3):
+        result[y1:y1+th, x1:x1+tw, c] = test_resized[:, :, c] * shadow_map
+    
+    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
 # --- CARICAMENTO ---
 @st.cache_data
@@ -540,10 +548,10 @@ elif menu == "🎯 Calibrazione Coordinate":
                 st.divider()
                 
                 # Carica immagine di test
-                st.subheader("Immagine di Test")
+                st.subheader("Immagine di Test con Multiply Blend")
                 col_upload, col_remove = st.columns([3, 1])
                 with col_upload:
-                    test_upload = st.file_uploader("Carica un'immagine per vedere l'anteprima", type=['jpg', 'jpeg', 'png'], key='test_img_upload')
+                    test_upload = st.file_uploader("Carica un'immagine per vedere l'anteprima BLENDED", type=['jpg', 'jpeg', 'png'], key='test_img_upload')
                     if test_upload:
                         st.session_state.test_image = Image.open(test_upload)
                 
@@ -555,21 +563,22 @@ elif menu == "🎯 Calibrazione Coordinate":
                 
                 # Visualizzazione
                 st.divider()
-                st.subheader("Anteprima")
+                st.subheader("Anteprima con Multiply Blend")
                 
                 if st.session_state.test_image is not None:
-                    # Mostra l'anteprima con l'immagine di test
-                    preview_img = apply_test_image_to_template(
+                    # Mostra l'anteprima con l'immagine di test BLENDED
+                    preview_img = apply_test_image_blended(
                         template_img, 
                         st.session_state.test_image,
                         st.session_state.cal_px, 
                         st.session_state.cal_py, 
                         st.session_state.cal_pw, 
-                        st.session_state.cal_ph
+                        st.session_state.cal_ph,
+                        st.session_state.cal_offset
                     )
-                    st.image(preview_img, caption="Anteprima con immagine di test", use_column_width=True)
+                    st.image(preview_img, caption=f"Anteprima BLENDED (Offset: {st.session_state.cal_offset}px)", use_column_width=True)
                 else:
-                    st.info("Carica un'immagine di test per vedere l'anteprima")
+                    st.info("Carica un'immagine di test per vedere l'anteprima con multiply blend")
                     st.image(template_img, caption="Template originale", use_column_width=True)
                 
                 # Test con design reale
