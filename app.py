@@ -327,6 +327,18 @@ def get_template_thumbnails():
             thumbs[cat][fname] = thumb
     return lib, thumbs
 
+def get_all_template_names():
+    """Ottiene tutti i nomi dei template dalla cartella templates"""
+    base_path = "templates"
+    all_templates = []
+    
+    if os.path.exists(base_path):
+        for f_name in os.listdir(base_path):
+            if f_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+                all_templates.append(f_name)
+    
+    return sorted(all_templates)
+
 libreria, thumbnails = get_template_thumbnails()
 
 # --- INTERFACCIA ---
@@ -352,110 +364,128 @@ if menu == "📚 Templates":
 
 elif menu == "🎯 Calibrazione Coordinate":
     st.header("🎯 Calibrazione Coordinate Template")
-    st.info("Usa questo tool per regolare le coordinate dei template che usano il metodo PRECISION")
+    st.info("Usa questo tool per regolare le coordinate di qualsiasi template usando il metodo PRECISION")
     
-    # Seleziona template da calibrare
-    template_names = list(TEMPLATE_MAPS.keys())
-    selected_template = st.selectbox("Seleziona template da calibrare:", template_names)
+    # Ottiene TUTTI i template dalla cartella
+    all_template_names = get_all_template_names()
     
-    if selected_template:
-        # Carica il template
-        cat = get_manual_cat(selected_template)
-        if cat in libreria and selected_template in libreria[cat]:
-            template_img = libreria[cat][selected_template]
+    if not all_template_names:
+        st.error("Nessun template trovato nella cartella 'templates'!")
+    else:
+        # Raggruppa per categoria
+        templates_by_cat = {"Verticali": [], "Orizzontali": [], "Quadrati": [], "Altro": []}
+        for tname in all_template_names:
+            cat = get_manual_cat(tname)
+            templates_by_cat[cat].append(tname)
+        
+        # Seleziona categoria
+        cat_choice = st.selectbox("Seleziona categoria:", ["Verticali", "Orizzontali", "Quadrati", "Altro"])
+        
+        if templates_by_cat[cat_choice]:
+            # Seleziona template specifico
+            selected_template = st.selectbox("Seleziona template:", templates_by_cat[cat_choice])
             
-            # Coordinate attuali
-            current_coords = TEMPLATE_MAPS[selected_template]
-            px, py, pw, ph = current_coords
-            
-            st.subheader("Coordinate Attuali")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("X (%)", f"{px:.1f}")
-            with col2:
-                st.metric("Y (%)", f"{py:.1f}")
-            with col3:
-                st.metric("Width (%)", f"{pw:.1f}")
-            with col4:
-                st.metric("Height (%)", f"{ph:.1f}")
-            
-            st.divider()
-            
-            # Sliders per modificare le coordinate
-            st.subheader("Modifica Coordinate")
-            
-            col_a, col_b = st.columns(2)
-            with col_a:
-                new_px = st.slider("X Position (%)", 0.0, 100.0, px, 0.1, key='px')
-                new_pw = st.slider("Width (%)", 1.0, 100.0, pw, 0.1, key='pw')
-            with col_b:
-                new_py = st.slider("Y Position (%)", 0.0, 100.0, py, 0.1, key='py')
-                new_ph = st.slider("Height (%)", 1.0, 100.0, ph, 0.1, key='ph')
-            
-            st.divider()
-            
-            # Visualizzazione
-            st.subheader("Anteprima Area (rettangolo rosso)")
-            overlay_img = draw_overlay_box(template_img, new_px, new_py, new_pw, new_ph)
-            st.image(overlay_img, use_column_width=True)
-            
-            # Test con design
-            st.divider()
-            st.subheader("Test con Design")
-            test_design = st.file_uploader("Carica un design per testare le coordinate", type=['jpg', 'jpeg', 'png'])
-            
-            if test_design:
-                design_img = Image.open(test_design)
+            if selected_template:
+                # Carica il template
+                if cat_choice in libreria and selected_template in libreria[cat_choice]:
+                    template_img = libreria[cat_choice][selected_template]
+                else:
+                    # Carica direttamente se non è in cache
+                    template_img = Image.open(os.path.join("templates", selected_template)).convert('RGB')
                 
-                # Crea coordinate temporanee
-                temp_maps = TEMPLATE_MAPS.copy()
-                temp_maps[selected_template] = (new_px, new_py, new_pw, new_ph)
+                # Coordinate attuali (o default se non esistono)
+                if selected_template in TEMPLATE_MAPS:
+                    current_coords = TEMPLATE_MAPS[selected_template]
+                    px, py, pw, ph = current_coords
+                    st.success(f"✅ Template già calibrato - Metodo: PRECISION")
+                else:
+                    # Valori di default ragionevoli
+                    px, py, pw, ph = 20.0, 10.0, 60.0, 80.0
+                    st.warning(f"⚠️ Template NON calibrato - Usa il metodo automatico. Imposta coordinate per usare PRECISION.")
                 
-                # Salva temporaneamente
-                old_maps = TEMPLATE_MAPS.copy()
-                TEMPLATE_MAPS.update(temp_maps)
+                st.subheader("Coordinate Attuali")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("X (%)", f"{px:.1f}")
+                with col2:
+                    st.metric("Y (%)", f"{py:.1f}")
+                with col3:
+                    st.metric("Width (%)", f"{pw:.1f}")
+                with col4:
+                    st.metric("Height (%)", f"{ph:.1f}")
                 
-                # Genera anteprima
-                result = composite_v3_fixed(template_img, design_img, selected_template)
+                st.divider()
                 
-                # Ripristina
-                TEMPLATE_MAPS.update(old_maps)
+                # Sliders per modificare le coordinate
+                st.subheader("Modifica Coordinate")
                 
-                if result:
-                    col_before, col_after = st.columns(2)
-                    with col_before:
-                        st.write("**Template Originale**")
-                        st.image(template_img, use_column_width=True)
-                    with col_after:
-                        st.write("**Con Design Applicato**")
-                        st.image(result, use_column_width=True)
-            
-            st.divider()
-            
-            # Pulsanti di azione
-            col_save, col_reset = st.columns(2)
-            with col_save:
-                if st.button("💾 SALVA COORDINATE", type="primary"):
-                    TEMPLATE_MAPS[selected_template] = (new_px, new_py, new_pw, new_ph)
-                    save_template_maps(TEMPLATE_MAPS)
-                    st.success(f"✅ Coordinate salvate per {selected_template}!")
-                    st.balloons()
-            
-            with col_reset:
-                if st.button("🔄 RESET AI VALORI DEFAULT"):
-                    default_maps = {
-                        "base_verticale_temi_app.jpg": (35.1, 10.4, 29.8, 79.2),
-                        "base_orizzontale_temi_app.jpg": (19.4, 9.4, 61.2, 81.2),
-                        "base_orizzontale_temi_app3.jpg": (19.4, 9.4, 61.2, 81.2),
-                        "base_quadrata_temi_app.jpg": (28.2, 10.4, 43.6, 77.4),
-                        "base_bottom_app.jpg": (22.8, 4.4, 54.8, 89.6),
-                    }
-                    TEMPLATE_MAPS[selected_template] = default_maps[selected_template]
-                    save_template_maps(TEMPLATE_MAPS)
-                    st.success("✅ Coordinate resettate ai valori di default!")
-                    st.rerun()
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    new_px = st.slider("X Position (%)", 0.0, 100.0, px, 0.1, key='px')
+                    new_pw = st.slider("Width (%)", 1.0, 100.0, pw, 0.1, key='pw')
+                with col_b:
+                    new_py = st.slider("Y Position (%)", 0.0, 100.0, py, 0.1, key='py')
+                    new_ph = st.slider("Height (%)", 1.0, 100.0, ph, 0.1, key='ph')
+                
+                st.divider()
+                
+                # Visualizzazione
+                st.subheader("Anteprima Area (rettangolo rosso)")
+                overlay_img = draw_overlay_box(template_img, new_px, new_py, new_pw, new_ph)
+                st.image(overlay_img, use_column_width=True)
+                
+                # Test con design
+                st.divider()
+                st.subheader("Test con Design")
+                test_design = st.file_uploader("Carica un design per testare le coordinate", type=['jpg', 'jpeg', 'png'])
+                
+                if test_design:
+                    design_img = Image.open(test_design)
+                    
+                    # Crea coordinate temporanee
+                    temp_maps = TEMPLATE_MAPS.copy()
+                    temp_maps[selected_template] = (new_px, new_py, new_pw, new_ph)
+                    
+                    # Salva temporaneamente
+                    old_maps = TEMPLATE_MAPS.copy()
+                    TEMPLATE_MAPS.update(temp_maps)
+                    
+                    # Genera anteprima
+                    result = composite_v3_fixed(template_img, design_img, selected_template)
+                    
+                    # Ripristina
+                    TEMPLATE_MAPS.update(old_maps)
+                    
+                    if result:
+                        col_before, col_after = st.columns(2)
+                        with col_before:
+                            st.write("**Template Originale**")
+                            st.image(template_img, use_column_width=True)
+                        with col_after:
+                            st.write("**Con Design Applicato**")
+                            st.image(result, use_column_width=True)
+                
+                st.divider()
+                
+                # Pulsanti di azione
+                col_save, col_remove = st.columns(2)
+                with col_save:
+                    if st.button("💾 SALVA COORDINATE", type="primary"):
+                        TEMPLATE_MAPS[selected_template] = (new_px, new_py, new_pw, new_ph)
+                        save_template_maps(TEMPLATE_MAPS)
+                        st.success(f"✅ Coordinate salvate per {selected_template}!")
+                        st.info("Ora questo template userà il metodo PRECISION con le coordinate personalizzate.")
+                        st.balloons()
+                
+                with col_remove:
+                    if selected_template in TEMPLATE_MAPS:
+                        if st.button("🗑️ RIMUOVI CALIBRAZIONE"):
+                            del TEMPLATE_MAPS[selected_template]
+                            save_template_maps(TEMPLATE_MAPS)
+                            st.success("✅ Calibrazione rimossa! Il template userà il metodo automatico.")
+                            st.rerun()
         else:
-            st.error(f"Template {selected_template} non trovato nella libreria!")
+            st.info(f"Nessun template trovato nella categoria {cat_choice}")
 
 elif menu == "⚡ Produzione":
     st.subheader("⚡ Produzione")
@@ -490,6 +520,9 @@ elif menu == "⚡ Produzione":
                     with st.spinner(f"Generando {t_name}..."):
                         result = composite_v3_fixed(t_img, d_img, t_name)
                         if result:
+                            # Mostra badge se usa PRECISION
+                            if t_name in TEMPLATE_MAPS:
+                                st.caption("🎯 PRECISION")
                             st.image(result, caption=t_name, use_column_width=True)
                         else:
                             st.error(f"Errore: {t_name}")
