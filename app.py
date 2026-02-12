@@ -6,7 +6,7 @@ import io
 import zipfile
 
 # --- 1. SETUP E COORDINATE DEFINITIVE ---
-st.set_page_config(page_title="PhotoBook Master Pro V5.3", layout="wide")
+st.set_page_config(page_title="PhotoBook Master Pro V5.4", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
@@ -19,7 +19,7 @@ if 'coords' not in st.session_state:
         "base_orizzontale_temi_app.jpg": [18.9, 9.4, 61.8, 83.0],
         "base_orizzontale_temi_app3.jpg": [18.7, 9.4, 62.2, 82.6],
         "base_quadrata_temi_app.jpg": [27.8, 10.8, 44.5, 79.0],
-        # IL 30x30 È STATO RIMOSSO DA QUI COSÌ NON È PIÙ STATICO
+        # IL 30x30 È STATO RIMOSSO DA QUI COSÌ NON È PIÙ STATICO E USA IL BLENDING
     }
 
 if 'uploader_key' not in st.session_state:
@@ -102,7 +102,7 @@ def load_lib():
 libreria = load_lib()
 
 # --- 3. INTERFACCIA ---
-st.title("📖 PhotoBook Master V5.3")
+st.title("📖 PhotoBook Master V5.4")
 
 with st.sidebar:
     st.header("📊 Stato Libreria")
