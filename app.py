@@ -305,23 +305,33 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
 
 st.divider()
 
-# --- SEZIONE ANTEPRIMA TUTTI I FORMATI ---
-st.subheader("🔍 Anteprima Design su Tutti i Formati")
-preview_design = st.file_uploader("Carica un design per vedere l'anteprima su tutti i formati", type=['jpg', 'jpeg', 'png'])
+# --- SEZIONE PRODUZIONE ---
+st.subheader("⚡ Produzione")
+col_sel, col_del = st.columns([3, 1])
+with col_sel:
+    scelta = st.radio("Seleziona formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+with col_del:
+    if st.button("🗑️ SVUOTA DESIGN"):
+        st.session_state.uploader_key += 1
+        st.rerun()
+
+# --- ANTEPRIMA PER IL FORMATO SELEZIONATO ---
+st.subheader(f"🔍 Anteprima Design per formato {scelta}")
+preview_design = st.file_uploader(
+    f"Carica un design per vedere l'anteprima su tutti i template {scelta}", 
+    type=['jpg', 'jpeg', 'png'],
+    key='preview_uploader'
+)
 
 if preview_design:
     d_img = Image.open(preview_design)
     st.info(f"Design caricato: {preview_design.name}")
     
-    # Mostra anteprime per ogni categoria
-    for cat_name in ["Verticali", "Orizzontali", "Quadrati"]:
-        st.subheader(f"📐 {cat_name}")
-        target_tmpls = libreria[cat_name]
-        
-        if not target_tmpls:
-            st.warning(f"Nessun template {cat_name} disponibile.")
-            continue
-        
+    target_tmpls = libreria[scelta]
+    
+    if not target_tmpls:
+        st.warning(f"Nessun template {scelta} disponibile.")
+    else:
         cols = st.columns(4)
         for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
             with cols[idx % 4]:
@@ -334,17 +344,12 @@ if preview_design:
     
     st.divider()
 
-# --- SEZIONE PRODUZIONE ---
-st.subheader("⚡ Produzione")
-col_sel, col_del = st.columns([3, 1])
-with col_sel:
-    scelta = st.radio("Seleziona formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-with col_del:
-    if st.button("🗑️ SVUOTA DESIGN"):
-        st.session_state.uploader_key += 1
-        st.rerun()
-
-disegni = st.file_uploader(f"Carica design {scelta}", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
+# --- CARICAMENTO MULTIPLO PER PRODUZIONE ---
+disegni = st.file_uploader(
+    f"Carica design {scelta} per produzione batch", 
+    accept_multiple_files=True, 
+    key=f"up_{st.session_state.uploader_key}"
+)
 
 if st.button("🚀 GENERA TUTTI"):
     if not disegni or not libreria[scelta]:
