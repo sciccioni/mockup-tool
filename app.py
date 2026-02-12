@@ -6,7 +6,7 @@ import io
 import zipfile
 
 # --- 1. CONFIGURAZIONE E COORDINATE DEFINITIVE ---
-st.set_page_config(page_title="PhotoBook Production V4.3 - Soft Edges", layout="wide")
+st.set_page_config(page_title="PhotoBook V4.4 - Interactive Soft Edges", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -21,13 +21,16 @@ TEMPLATE_MAPS = {
     "base_quadrata_temi_app.jpg": (27.8, 10.8, 44.5, 79.0),
 }
 
-# --- 2. FUNZIONE PER SFUMARE I BORDI (FEATHERING) ---
-def get_feathered_mask(size, blur_radius=5):
-    """Crea una maschera con i bordi sfumati per fondere la cover."""
+# --- 2. FUNZIONE PER SFUMARE I BORDI (DINAMICA) ---
+def get_feathered_mask(size, blur_radius):
+    """Crea una maschera con i bordi sfumati variabile."""
+    if blur_radius == 0:
+        return Image.new("L", size, 255)
+    
     mask = Image.new("L", size, 255)
     draw = ImageDraw.Draw(mask)
-    # Disegna un bordo nero sottile per permettere alla sfocatura di 'rientrare'
-    draw.rectangle([0, 0, size[0], size[1]], outline=0, width=2)
+    # Crea un piccolo rientro per permettere alla sfocatura di agire sui bordi esterni
+    draw.rectangle([0, 0, size[0], size[1]], outline=0, width=int(blur_radius/2) + 1)
     return mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
 # --- 3. LOGICA DI SMISTAMENTO ---
@@ -53,13 +56,12 @@ def find_book_region_auto(tmpl_gray, bg_val):
     face_val = float(np.median(face_area)) if face_area.size > 0 else 246.0
     return {'bx1': bx1, 'bx2': bx2, 'by1': by1, 'by2': by2, 'face_val': face_val}
 
-def process_mockup(tmpl_pil, cover_pil, t_name):
+def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
     h, w, _ = tmpl_rgb.shape
     cover = cover_pil.convert('RGB')
 
-    # Identificazione area
     if t_name in TEMPLATE_MAPS:
         px, py, pw, ph = TEMPLATE_MAPS[t_name]
         x1, y1 = int((px * w) / 100), int((py * h) / 100)
@@ -73,22 +75,16 @@ def process_mockup(tmpl_pil, cover_pil, t_name):
         tw, th = reg['bx2'] - x1 + 1, reg['by2'] - y1 + 1
         face_val = reg['face_val']
 
-    # 1. Resize e preparazione cover
     c_res = np.array(cover.resize((tw, th), Image.LANCZOS)).astype(np.float64)
     
-    # 2. Creazione Maschera di Sfumatura (5px)
-    feather_mask = get_feathered_mask((tw, th), blur_radius=5)
+    # Applicazione sfumatura dinamica
+    feather_mask = get_feathered_mask((tw, th), blur_rad)
     feather_alpha = np.array(feather_mask).astype(np.float64) / 255.0
-    feather_alpha = np.expand_dims(feather_alpha, axis=2) # Per i 3 canali RGB
+    feather_alpha = np.expand_dims(feather_alpha, axis=2)
 
-    # 3. Shadow Map (Multiply)
     shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / face_val, 0, 1.0)
     shadow_map = np.expand_dims(shadow_map, axis=2)
 
-    # 4. Composizione con fusione morbida
-    # pixel_copertina = (cover * ombre)
-    # pixel_finali = (pixel_copertina * maschera_sfumata) + (pixel_originali * (1 - maschera_sfumata))
-    
     target_area_orig = tmpl_rgb[y1:y1+th, x1:x1+tw]
     cover_applied = c_res * shadow_map
     
@@ -100,7 +96,7 @@ def process_mockup(tmpl_pil, cover_pil, t_name):
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
 # --- 5. INTERFACCIA STREAMLIT ---
-st.title("📖 PhotoBook Production - V4.3 Soft Edges")
+st.title("📖 PhotoBook Production - V4.4 (Preview Sfumatura)")
 
 @st.cache_data
 def load_library():
@@ -124,23 +120,25 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
 
 st.divider()
 
-st.subheader("🚀 Produzione in Batch (Sfumatura 5px)")
-col_sel, col_del = st.columns([3, 1])
+# Area Produzione con Slider Sfumatura
+st.subheader("🚀 Produzione in Batch")
+col_ctrl, col_up = st.columns([1, 2])
 
-with col_sel:
+with col_ctrl:
     categoria = st.radio("Seleziona Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-
-with col_del:
+    sfumatura = st.slider("Raggio Sfocatura Bordi (Pixel):", 0.0, 20.0, 5.0, 0.5)
+    
     if st.button("🗑️ SVUOTA DESIGN"):
         st.session_state.uploader_key += 1
         st.rerun()
 
-disegni = st.file_uploader(f"Carica i design:", 
-                           accept_multiple_files=True, 
-                           key=f"up_{st.session_state.uploader_key}")
+with col_up:
+    disegni = st.file_uploader(f"Carica i design:", 
+                               accept_multiple_files=True, 
+                               key=f"up_{st.session_state.uploader_key}")
 
 if disegni and libreria[categoria]:
-    if st.button("🚀 GENERA TUTTI I MOCKUP"):
+    if st.button("🚀 GENERA E SCARICA ZIP"):
         zip_io = io.BytesIO()
         with zipfile.ZipFile(zip_io, "a") as zf:
             bar = st.progress(0)
@@ -151,18 +149,18 @@ if disegni and libreria[categoria]:
                 d_img = Image.open(d_file)
                 d_name = os.path.splitext(d_file.name)[0]
                 for t_name, t_img in target_list.items():
-                    res = process_mockup(t_img, d_img, t_name)
+                    res = process_mockup(t_img, d_img, t_name, sfumatura)
                     if res:
                         buf = io.BytesIO()
                         res.save(buf, format='JPEG', quality=95)
                         zf.writestr(f"{d_name}/{t_name}.jpg", buf.getvalue())
                     curr += 1
                     bar.progress(curr / total_ops)
-        st.success("✅ Completato!")
-        st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), f"Mockups_Sfumati.zip")
+        st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), f"Mockups_Sfumati_{sfumatura}.zip")
 
+    # --- ANTEPRIMA REAL-TIME ---
     st.divider()
-    st.subheader("👁️ Anteprima con Sfumatura")
-    t_test_name = list(libreria[categoria].keys())[0]
-    preview = process_mockup(libreria[categoria][t_test_name], Image.open(disegni[-1]), t_test_name)
-    st.image(preview, caption=f"Effetto sfumato su {t_test_name}", use_column_width=True)
+    st.subheader(f"👁️ Anteprima Real-Time (Sfumatura: {sfumatura}px)")
+    t_preview_name = list(libreria[categoria].keys())[0]
+    preview = process_mockup(libreria[categoria][t_preview_name], Image.open(disegni[-1]), t_preview_name, sfumatura)
+    st.image(preview, use_column_width=True)
