@@ -1,19 +1,19 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter, ImageDraw
 import os
 import io
 import zipfile
 
 # --- 1. CONFIGURAZIONE E COORDINATE DEFINITIVE ---
-st.set_page_config(page_title="PhotoBook Production V4.2", layout="wide")
+st.set_page_config(page_title="PhotoBook Production V4.3 - Soft Edges", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# Dizionario con le tue calibrazioni millimetriche
+# Le tue coordinate calibrate
 TEMPLATE_MAPS = {
-    "base_copertina_verticale.jpg": (0.0, 0.0, 100.0, 100.0), # Forza il riempimento totale
+    "base_copertina_verticale.jpg": (0.0, 0.0, 100.0, 100.0),
     "base_verticale_temi_app.jpg": (34.6, 9.2, 30.2, 80.3),
     "base_bottom_app.jpg": (21.9, 4.9, 56.5, 91.3),
     "base_orizzontale_temi_app.jpg": (18.9, 9.4, 61.8, 83.0),
@@ -21,7 +21,16 @@ TEMPLATE_MAPS = {
     "base_quadrata_temi_app.jpg": (27.8, 10.8, 44.5, 79.0),
 }
 
-# --- 2. LOGICA DI SMISTAMENTO ---
+# --- 2. FUNZIONE PER SFUMARE I BORDI (FEATHERING) ---
+def get_feathered_mask(size, blur_radius=5):
+    """Crea una maschera con i bordi sfumati per fondere la cover."""
+    mask = Image.new("L", size, 255)
+    draw = ImageDraw.Draw(mask)
+    # Disegna un bordo nero sottile per permettere alla sfocatura di 'rientrare'
+    draw.rectangle([0, 0, size[0], size[1]], outline=0, width=2)
+    return mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+
+# --- 3. LOGICA DI SMISTAMENTO ---
 def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]): return "Verticali"
@@ -29,7 +38,7 @@ def get_manual_cat(filename):
     if any(x in fn for x in ["quadrata", "20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
-# --- 3. MOTORE DI COMPOSIZIONE IBRIDO ---
+# --- 4. MOTORE DI COMPOSIZIONE IBRIDO ---
 def find_book_region_auto(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 3)
@@ -50,34 +59,48 @@ def process_mockup(tmpl_pil, cover_pil, t_name):
     h, w, _ = tmpl_rgb.shape
     cover = cover_pil.convert('RGB')
 
+    # Identificazione area
     if t_name in TEMPLATE_MAPS:
-        # LOGICA A: COORDINATE FISSE (MOLTIPLICA)
         px, py, pw, ph = TEMPLATE_MAPS[t_name]
         x1, y1 = int((px * w) / 100), int((py * h) / 100)
         tw, th = int((pw * w) / 100), int((ph * h) / 100)
-        c_res = np.array(cover.resize((tw, th), Image.LANCZOS)).astype(np.float64)
-        
-        # Shadow Map per mantenere le ombre originali (non usata se 0,0,100,100 su bianco puro)
-        shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / 255.0, 0, 1.0)
-        result = tmpl_rgb.copy()
-        for c in range(3):
-            result[y1:y1+th, x1:x1+tw, c] = c_res[:, :, c] * shadow_map
-        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+        face_val = 255.0
     else:
-        # LOGICA B: AUTOMATICA (FALLBACK)
         corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
         reg = find_book_region_auto(tmpl_gray, np.median(corners))
         if not reg: return None
-        tw, th = reg['bx2']-reg['bx1']+1, reg['by2']-reg['by1']+1
-        c_res = np.array(cover.resize((tw, th), Image.LANCZOS)).astype(np.float64)
-        ratio = np.clip(tmpl_gray[reg['by1']:reg['by2']+1, reg['bx1']:reg['bx2']+1] / reg['face_val'], 0, 1.0)
-        result = tmpl_rgb.copy()
-        for c in range(3):
-            result[reg['by1']:reg['by2']+1, reg['bx1']:reg['bx2']+1, c] = c_res[:, :, c] * ratio
-        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+        x1, y1 = reg['bx1'], reg['by1']
+        tw, th = reg['bx2'] - x1 + 1, reg['by2'] - y1 + 1
+        face_val = reg['face_val']
 
-# --- 4. INTERFACCIA STREAMLIT ---
-st.title("📖 PhotoBook Production - V4.2")
+    # 1. Resize e preparazione cover
+    c_res = np.array(cover.resize((tw, th), Image.LANCZOS)).astype(np.float64)
+    
+    # 2. Creazione Maschera di Sfumatura (5px)
+    feather_mask = get_feathered_mask((tw, th), blur_radius=5)
+    feather_alpha = np.array(feather_mask).astype(np.float64) / 255.0
+    feather_alpha = np.expand_dims(feather_alpha, axis=2) # Per i 3 canali RGB
+
+    # 3. Shadow Map (Multiply)
+    shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / face_val, 0, 1.0)
+    shadow_map = np.expand_dims(shadow_map, axis=2)
+
+    # 4. Composizione con fusione morbida
+    # pixel_copertina = (cover * ombre)
+    # pixel_finali = (pixel_copertina * maschera_sfumata) + (pixel_originali * (1 - maschera_sfumata))
+    
+    target_area_orig = tmpl_rgb[y1:y1+th, x1:x1+tw]
+    cover_applied = c_res * shadow_map
+    
+    blended_area = (cover_applied * feather_alpha) + (target_area_orig * (1 - feather_alpha))
+    
+    result = tmpl_rgb.copy()
+    result[y1:y1+th, x1:x1+tw] = blended_area
+    
+    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+
+# --- 5. INTERFACCIA STREAMLIT ---
+st.title("📖 PhotoBook Production - V4.3 Soft Edges")
 
 @st.cache_data
 def load_library():
@@ -101,7 +124,7 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
 
 st.divider()
 
-st.subheader("🚀 Produzione in Batch")
+st.subheader("🚀 Produzione in Batch (Sfumatura 5px)")
 col_sel, col_del = st.columns([3, 1])
 
 with col_sel:
@@ -112,7 +135,7 @@ with col_del:
         st.session_state.uploader_key += 1
         st.rerun()
 
-disegni = st.file_uploader(f"Carica i design per {categoria}:", 
+disegni = st.file_uploader(f"Carica i design:", 
                            accept_multiple_files=True, 
                            key=f"up_{st.session_state.uploader_key}")
 
@@ -136,10 +159,10 @@ if disegni and libreria[categoria]:
                     curr += 1
                     bar.progress(curr / total_ops)
         st.success("✅ Completato!")
-        st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), f"Mockups_{categoria}.zip")
+        st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), f"Mockups_Sfumati.zip")
 
     st.divider()
-    st.subheader("👁️ Anteprima Rapida")
+    st.subheader("👁️ Anteprima con Sfumatura")
     t_test_name = list(libreria[categoria].keys())[0]
     preview = process_mockup(libreria[categoria][t_test_name], Image.open(disegni[-1]), t_test_name)
-    st.image(preview, caption=f"Anteprima su {t_test_name}", use_column_width=True)
+    st.image(preview, caption=f"Effetto sfumato su {t_test_name}", use_column_width=True)
