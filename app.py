@@ -305,6 +305,36 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
 
 st.divider()
 
+# --- SEZIONE ANTEPRIMA TUTTI I FORMATI ---
+st.subheader("🔍 Anteprima Design su Tutti i Formati")
+preview_design = st.file_uploader("Carica un design per vedere l'anteprima su tutti i formati", type=['jpg', 'jpeg', 'png'])
+
+if preview_design:
+    d_img = Image.open(preview_design)
+    st.info(f"Design caricato: {preview_design.name}")
+    
+    # Mostra anteprime per ogni categoria
+    for cat_name in ["Verticali", "Orizzontali", "Quadrati"]:
+        st.subheader(f"📐 {cat_name}")
+        target_tmpls = libreria[cat_name]
+        
+        if not target_tmpls:
+            st.warning(f"Nessun template {cat_name} disponibile.")
+            continue
+        
+        cols = st.columns(4)
+        for idx, (t_name, t_img) in enumerate(target_tmpls.items()):
+            with cols[idx % 4]:
+                with st.spinner(f"Generando {t_name}..."):
+                    result = composite_v3_fixed(t_img, d_img, t_name)
+                    if result:
+                        st.image(result, caption=t_name, use_column_width=True)
+                    else:
+                        st.error(f"Errore: {t_name}")
+    
+    st.divider()
+
+# --- SEZIONE PRODUZIONE ---
 st.subheader("⚡ Produzione")
 col_sel, col_del = st.columns([3, 1])
 with col_sel:
