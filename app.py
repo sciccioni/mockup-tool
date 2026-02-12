@@ -5,112 +5,134 @@ import os
 import io
 import zipfile
 
-# --- 1. CONFIGURAZIONE E COORDINATE PRECISE ---
-st.set_page_config(page_title="PhotoBook Production Pro", layout="wide")
+# --- 1. CONFIGURAZIONE E COORDINATE FISSE (SOLO PER TEMPLATE APP) ---
+st.set_page_config(page_title="PhotoBook Pro - Production Ready", layout="wide")
 
-# Inserisci qui le coordinate che hai trovato con il calibratore.
-# Se le coordinate non sono perfette, basta cambiare questi numeri.
+# Queste coordinate sono bloccate per i tuoi template specifici. 
+# Formato: (x_inizio_%, y_inizio_%, larghezza_%, altezza_%)
 TEMPLATE_MAPS = {
-    "base_verticale_temi_app.jpg": (35.1, 10.4, 29.8, 79.2),
-    "base_orizzontale_temi_app.jpg": (19.4, 9.4, 61.2, 81.2),
-    "base_orizzontale_temi_app3.jpg": (19.4, 9.4, 61.2, 81.2),
-    "base_quadrata_temi_app.jpg": (28.2, 10.4, 43.6, 77.4),
-    "base_bottom_app.jpg": (22.8, 4.4, 54.8, 89.6),
+    "base_verticale_temi_app": (35.1, 10.4, 29.8, 79.2),
+    "base_orizzontale_temi_app": (19.4, 9.4, 61.2, 81.2),
+    "base_orizzontale_temi_app3": (19.4, 9.4, 61.2, 81.2),
+    "base_quadrata_temi_app": (28.2, 10.4, 43.6, 77.4),
+    "base_bottom_app": (22.8, 4.4, 54.8, 89.6),
 }
 
-# --- 2. MOTORE DI COMPOSIZIONE ---
-def composite_engine(tmpl_pil, cover_pil, filename):
-    """Applica la copertina al template usando il mapping e le ombre."""
+# --- 2. LOGICA AUTOMATICA (FALLBACK PER ALTRI TEMPLATE) ---
+def find_book_region(tmpl_gray, bg_val):
+    """Rilevamento bordi standard per template non-APP."""
+    h, w = tmpl_gray.shape
+    book_mask = tmpl_gray > (bg_val + 3)
+    rows = np.any(book_mask, axis=1)
+    cols = np.any(book_mask, axis=0)
+    
+    if not rows.any() or not cols.any():
+        return None
+    
+    by1, by2 = np.where(rows)[0][[0, -1]]
+    bx1, bx2 = np.where(cols)[0][[0, -1]]
+    
+    # Trova il punto bianco per la normalizzazione
+    mid_y = (by1 + by2) // 2
+    row = tmpl_gray[mid_y]
+    face_x1 = bx1
+    for x in range(bx1, bx2 - 5):
+        if np.all(row[x:x+5] >= 240):
+            face_x1 = x
+            break
+            
+    margin = 30
+    face_area = tmpl_gray[by1+margin:by2-margin, face_x1+margin:bx2-margin]
+    face_val = float(np.median(face_area)) if face_area.size > 0 else 246.0
+    
+    return {'bx1': bx1, 'bx2': bx2, 'by1': by1, 'by2': by2, 'face_val': face_val}
+
+# --- 3. MOTORE DI COMPOSIZIONE ---
+def process_mockup(tmpl_pil, cover_pil, t_name):
     tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
     tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
     h, w, _ = tmpl_rgb.shape
-    
-    if filename not in TEMPLATE_MAPS:
-        return None # Salta se il file non è mappato
+    cover = cover_pil.convert('RGB')
 
-    px, py, pw, ph = TEMPLATE_MAPS[filename]
-    x1, y1 = int((px * w) / 100), int((py * h) / 100)
-    tw, th = int((pw * w) / 100), int((ph * h) / 100)
-    
-    # Resize della cover
-    cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
-    
-    # Shadow Map (Effetto Multiply) per il realismo della rilegatura
-    book_shadows = tmpl_gray[y1:y1+th, x1:x1+tw]
-    shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
-    
-    result = tmpl_rgb.copy()
-    for c in range(3):
-        # Fusione: Cover * Ombre originali
-        result[y1:y1+th, x1:x1+tw, c] = cover_res[:, :, c] * shadow_map
+    # CONTROLLO LOGICA: È un template APP?
+    app_key = next((k for k in TEMPLATE_MAPS.keys() if k in t_name.lower()), None)
+
+    if app_key:
+        # --- LOGICA A: COORDINATE FISSE + SHADOW MAP ---
+        px, py, pw, ph = TEMPLATE_MAPS[app_key]
+        x1, y1 = int((px * w) / 100), int((py * h) / 100)
+        tw, th = int((pw * w) / 100), int((ph * h) / 100)
         
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+        c_res = np.array(cover.resize((tw, th), Image.LANCZOS)).astype(np.float64)
+        
+        # Multiply blending: usa l'ombra del libro originale
+        book_shadows = tmpl_gray[y1:y1+th, x1:x1+tw]
+        shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
+        
+        result = tmpl_rgb.copy()
+        for c in range(3):
+            result[y1:y1+th, x1:x1+tw, c] = c_res[:, :, c] * shadow_map
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-# --- 3. CARICAMENTO LIBRERIA TEMPLATE ---
-@st.cache_data
-def load_template_library():
-    base_path = "templates" # Assicurati che la cartella esista
-    lib = {}
-    if os.path.exists(base_path):
-        for f in os.listdir(base_path):
-            if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-                lib[f] = Image.open(os.path.join(base_path, f))
-    return lib
+    else:
+        # --- LOGICA B: AUTOMATICA (AS IS) ---
+        corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
+        bg_val = np.median(corners)
+        reg = find_book_region(tmpl_gray, bg_val)
+        
+        if reg is None: return None
+        
+        tw, th = reg['bx2'] - reg['bx1'] + 1, reg['by2'] - reg['by1'] + 1
+        c_res = np.array(cover.resize((tw, th), Image.LANCZOS)).astype(np.float64)
+        
+        ratio = np.minimum(tmpl_gray[reg['by1']:reg['by2']+1, reg['bx1']:reg['bx2']+1] / reg['face_val'], 1.0)
+        
+        result = tmpl_rgb.copy()
+        for c in range(3):
+            result[reg['by1']:reg['by2']+1, reg['bx1']:reg['bx2']+1, c] = c_res[:, :, c] * ratio
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-templates = load_template_library()
-
-# --- 4. INTERFACCIA UTENTE ---
+# --- 4. INTERFACCIA STREAMLIT ---
 st.title("📖 PhotoBook Production System")
 
-if not templates:
-    st.error("❌ Cartella '/templates' non trovata o vuota. Carica i template lì dentro.")
+# Caricamento Template
+@st.cache_data
+def get_templates():
+    path = "templates"
+    if not os.path.exists(path): return {}
+    return {f: Image.open(os.path.join(path, f)) for f in os.listdir(path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))}
+
+lib = get_templates()
+
+if not lib:
+    st.error("❌ Cartella '/templates' non trovata. Carica i mockup lì dentro.")
 else:
     with st.sidebar:
-        st.header("Impostazioni")
-        t_selezionato = st.selectbox("Scegli il Template:", list(templates.keys()))
-        st.divider()
-        st.info("Questo script usa coordinate fisse per una precisione millimetrica.")
+        st.header("Setup")
+        sel_t = st.selectbox("Seleziona Mockup:", list(lib.keys()))
+        is_app_mode = any(k in sel_t.lower() for k in TEMPLATE_MAPS.keys())
+        st.write(f"Modalità: {'**COORDINATE FISSE**' if is_app_mode else '**AUTOMATICA**'}")
 
-    st.subheader("1. Carica i tuoi Design")
-    disegni = st.file_uploader("Trascina qui i file delle copertine (JPG/PNG):", accept_multiple_files=True)
+    files = st.file_uploader("Carica i tuoi design:", accept_multiple_files=True)
 
-    if disegni:
-        st.subheader(f"2. Elaborazione ({len(disegni)} file)")
-        
-        if st.button("🚀 GENERA E SCARICA TUTTO"):
-            zip_buf = io.BytesIO()
+    if files:
+        if st.button("🚀 GENERA TUTTI"):
+            zip_io = io.BytesIO()
+            with zipfile.ZipFile(zip_io, "a", zipfile.ZIP_DEFLATED) as zf:
+                bar = st.progress(0)
+                for i, f in enumerate(files):
+                    res = process_mockup(lib[sel_t], Image.open(f), sel_t)
+                    if res:
+                        buf = io.BytesIO()
+                        res.save(buf, format='JPEG', quality=95)
+                        zf.writestr(f"Mockup_{f.name}", buf.getvalue())
+                    bar.progress((i + 1) / len(files))
             
-            with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zip_file:
-                progress_bar = st.progress(0)
-                
-                for idx, d_file in enumerate(disegni):
-                    d_img = Image.open(d_file)
-                    # Applichiamo il motore di composizione
-                    mockup_finale = composite_engine(templates[t_selezionato], d_img, t_selezionato)
-                    
-                    if mockup_finale:
-                        # Salvataggio in memoria
-                        img_byte_arr = io.BytesIO()
-                        mockup_finale.save(img_byte_arr, format='JPEG', quality=95)
-                        
-                        # Aggiunta allo ZIP
-                        nome_file = f"{os.path.splitext(d_file.name)[0]}_MOCKUP.jpg"
-                        zip_file.writestr(nome_file, img_byte_arr.getvalue())
-                    
-                    progress_bar.progress((idx + 1) / len(disegni))
-            
-            st.success("✅ Generazione completata!")
-            st.download_button(
-                label="📥 SCARICA ZIP",
-                data=zip_buf.getvalue(),
-                file_name=f"Mockups_{t_selezionato}.zip",
-                mime="application/zip"
-            )
+            st.success("✅ Finito!")
+            st.download_button("📥 Scarica ZIP", zip_io.getvalue(), f"Mockups_{sel_t}.zip")
 
-    # --- ANTEPRIMA RAPIDA ---
-    if disegni and templates:
+        # Anteprima dell'ultimo caricato
         st.divider()
-        st.subheader("Anteprima dell'ultimo file")
-        test_res = composite_engine(templates[t_selezionato], Image.open(disegni[-1]), t_selezionato)
-        if test_res:
-            st.image(test_res, use_column_width=True)
+        st.subheader("Anteprima Risultato")
+        p_res = process_mockup(lib[sel_t], Image.open(files[-1]), sel_t)
+        if p_res: st.image(p_res, use_column_width=True)
