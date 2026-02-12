@@ -5,28 +5,25 @@ import os
 import io
 import zipfile
 
-# --- 1. SETUP E COORDINATE ---
-st.set_page_config(page_title="PhotoBook Master V6.0", layout="wide")
+# --- 1. SETUP E COORDINATE SALVATE ---
+st.set_page_config(page_title="PhotoBook Master V6.1", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
-        # Template Piatti (Pieno formato)
         "base_copertina_verticale.jpg": [0.0, 0.0, 100.0, 100.0],
         "base_copertina_orizzontale.jpg": [0.0, 0.0, 100.0, 100.0],
-        # Template con libro fotografato (Esempi già calibrati)
         "base_verticale_temi_app.jpg": [34.6, 9.2, 30.2, 80.3],
         "base_bottom_app.jpg": [21.9, 4.9, 56.5, 91.3],
         "base_orizzontale_temi_app.jpg": [18.9, 9.4, 61.8, 83.0],
         "base_orizzontale_temi_app3.jpg": [18.7, 9.4, 62.2, 82.6],
         "base_quadrata_temi_app.jpg": [27.8, 10.8, 44.5, 79.0],
-        # 30x30: Lo facciamo partire piccolo (50%) per farti vedere i bordi
-        "30x30-crea la tua grafica.jpg": [25.0, 25.0, 50.0, 50.0], 
+        "30x30-crea la tua grafica.jpg": [5.0, 5.0, 90.0, 90.0],
     }
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- 2. MOTORE DI RENDERING ---
+# --- 2. MOTORE DI RENDERING (ANTI-CRASH) ---
 def get_feathered_mask(size, blur_radius):
     mask = Image.new("L", size, 255)
     if blur_radius > 0:
@@ -37,40 +34,54 @@ def get_feathered_mask(size, blur_radius):
     return mask
 
 def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
-    tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
-    tmpl_gray = np.array(tmpl_pil.convert('L')).astype(np.float64)
-    h, w, _ = tmpl_rgb.shape
+    # Convertiamo tutto in RGB/L e array
+    tmpl_img = tmpl_pil.convert('RGB')
+    tmpl_gray = tmpl_pil.convert('L')
+    w_full, h_full = tmpl_img.size
     
-    # Inizializzazione di emergenza
+    # Recupero coordinate
     if t_name not in st.session_state.coords:
-        st.session_state.coords[t_name] = [20.0, 20.0, 60.0, 60.0]
-
+        st.session_state.coords[t_name] = [10.0, 10.0, 80.0, 80.0]
+    
     px, py, pw, ph = st.session_state.coords[t_name]
-    x1, y1 = int((px * w) / 100), int((py * h) / 100)
-    tw, th = int((pw * w) / 100), int((ph * h) / 100)
     
-    # Protezione dimensioni
-    tw, th = max(1, tw), max(1, th)
+    # Calcolo pixel esatti
+    x1 = int((px * w_full) / 100)
+    y1 = int((py * h_full) / 100)
+    tw = int((pw * w_full) / 100)
+    th = int((ph * h_full) / 100)
     
-    cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
-    
-    # Shadow Map (Moltiplicazione per ombre e texture)
-    shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / 255.0, 0.0, 1.0)
-    shadow_map = np.expand_dims(shadow_map, axis=2)
+    # Protezione: non uscire dai bordi del template
+    tw = min(tw, w_full - x1)
+    th = min(th, h_full - y1)
+    if tw <= 0 or th <= 0: return None
 
-    # Maschera per bordi morbidi
+    # Ritaglio e preparazione shadow map
+    tmpl_crop_gray = np.array(tmpl_gray.crop((x1, y1, x1 + tw, y1 + th))).astype(np.float64)
+    shadow_map = np.clip(tmpl_crop_gray / 255.0, 0.0, 1.0)
+    shadow_map = np.expand_dims(shadow_map, axis=2) # Shape: (th, tw, 1)
+
+    # Resize cover ESATTO al ritaglio effettuato
+    cover_res = cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)
+    cover_arr = np.array(cover_res).astype(np.float64) # Shape: (th, tw, 3)
+
+    # Maschera sfocatura
     f_mask = get_feathered_mask((tw, th), blur_rad)
     alpha = np.array(f_mask).astype(np.float64) / 255.0
     alpha = np.expand_dims(alpha, axis=2)
 
-    # Blending finale
-    orig_area = tmpl_rgb[y1:y1+th, x1:x1+tw]
-    cover_final = cover_res * shadow_map
-    blended = (cover_final * alpha) + (orig_area * (1 - alpha))
+    # Blending: moltiplichiamo la cover per le ombre (Multiply)
+    cover_final = cover_arr * shadow_map
     
-    result = tmpl_rgb.copy()
-    result[y1:y1+th, x1:x1+tw] = blended
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+    # Composizione con sfondo originale
+    tmpl_crop_rgb = np.array(tmpl_img.crop((x1, y1, x1 + tw, y1 + th))).astype(np.float64)
+    blended = (cover_final * alpha) + (tmpl_crop_rgb * (1 - alpha))
+    
+    # Ricostruzione immagine finale
+    result_np = np.array(tmpl_img).copy()
+    result_np[y1:y1+th, x1:x1+tw] = np.clip(blended, 0, 255).astype(np.uint8)
+    
+    return Image.fromarray(result_np)
 
 # --- 3. SMISTAMENTO ---
 def get_manual_cat(filename):
@@ -96,51 +107,54 @@ def load_library():
 libreria = load_library()
 
 # --- 4. INTERFACCIA ---
+st.title("📖 PhotoBook Master V6.1")
+
 tab_prod, tab_sett = st.tabs(["🚀 PRODUZIONE", "⚙️ IMPOSTAZIONI"])
 
 with tab_prod:
-    st.subheader("Batch Mockup")
-    formato = st.radio("Categoria:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-    disegni = st.file_uploader("Carica design:", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
+    c_ctrl, c_up = st.columns([1, 2])
+    with c_ctrl:
+        categoria = st.radio("Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+        sfoca = st.slider("Sfocatura bordi:", 0.0, 15.0, 5.0, 0.5)
+        if st.button("🗑️ RESET"):
+            st.session_state.uploader_key += 1
+            st.rerun()
+    with c_up:
+        disegni = st.file_uploader("Carica design:", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
 
-    if disegni and libreria[formato]:
+    if disegni and libreria[categoria]:
         if st.button("🚀 GENERA ZIP"):
             zip_io = io.BytesIO()
             with zipfile.ZipFile(zip_io, "a") as zf:
                 for d_file in disegni:
                     d_img = Image.open(d_file)
                     d_fn = os.path.splitext(d_file.name)[0]
-                    for t_name, t_img in libreria[formato].items():
-                        res = process_mockup(t_img, d_img, t_name, 5.0)
-                        buf = io.BytesIO()
-                        res.save(buf, format='JPEG', quality=95)
-                        zf.writestr(f"{d_fn}/{t_name}.jpg", buf.getvalue())
+                    for t_name, t_img in libreria[categoria].items():
+                        res = process_mockup(t_img, d_img, t_name, sfoca)
+                        if res:
+                            buf = io.BytesIO()
+                            res.save(buf, format='JPEG', quality=95)
+                            zf.writestr(f"{d_fn}/{t_name}.jpg", buf.getvalue())
             st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), "Mockups.zip")
+        
+        t_pre = list(libreria[categoria].keys())[0]
+        st.image(process_mockup(libreria[categoria][t_pre], Image.open(disegni[-1]), t_pre, sfoca), use_column_width=True)
 
 with tab_sett:
-    st.subheader("🛠️ Calibrazione Millimetrica")
+    st.subheader("⚙️ Calibrazione Template")
     if libreria["Tutti"]:
         t_mod = st.selectbox("Seleziona template:", list(libreria["Tutti"].keys()))
-        
-        # Inizializza se nuovo
         if t_mod not in st.session_state.coords:
-            st.session_state.coords[t_mod] = [20.0, 20.0, 60.0, 60.0]
+            st.session_state.coords[t_mod] = [10.0, 10.0, 80.0, 80.0]
             
-        col_in, col_pre = st.columns([1, 2])
-        
-        with col_in:
-            st.write("**Regola la dimensione:**")
-            st.session_state.coords[t_mod][0] = st.slider("Posizione X %", 0.0, 100.0, st.session_state.coords[t_mod][0])
-            st.session_state.coords[t_mod][1] = st.slider("Posizione Y %", 0.0, 100.0, st.session_state.coords[t_mod][1])
-            st.session_state.coords[t_mod][2] = st.slider("Larghezza (W) %", 0.0, 100.0, st.session_state.coords[t_mod][2])
-            st.session_state.coords[t_mod][3] = st.slider("Altezza (H) %", 0.0, 100.0, st.session_state.coords[t_mod][3])
-            
-            t_cov_test = st.file_uploader("Carica cover per test:", type=['jpg', 'png'])
+        c_in, c_pre = st.columns([1, 2])
+        with c_in:
+            st.session_state.coords[t_mod][0] = st.number_input("X %", value=st.session_state.coords[t_mod][0], step=0.1)
+            st.session_state.coords[t_mod][1] = st.number_input("Y %", value=st.session_state.coords[t_mod][1], step=0.1)
+            st.session_state.coords[t_mod][2] = st.number_input("W %", value=st.session_state.coords[t_mod][2], step=0.1)
+            st.session_state.coords[t_mod][3] = st.number_input("H %", value=st.session_state.coords[t_mod][3], step=0.1)
+            t_cov_test = st.file_uploader("Cover test:", type=['jpg', 'png'])
             st.code(f"'{t_mod}': {st.session_state.coords[t_mod]},")
-
-        with col_pre:
+        with c_pre:
             if t_cov_test:
-                # Mostriamo l'anteprima con i bordi del libro visibili
                 st.image(process_mockup(libreria["Tutti"][t_mod], Image.open(t_cov_test), t_mod, 5.0), use_column_width=True)
-            else:
-                st.warning("Carica un'immagine nel riquadro a sinistra per iniziare a centrare.")
