@@ -5,8 +5,8 @@ import os
 import io
 import zipfile
 
-# --- 1. SETUP E COORDINATE (V5.1) ---
-st.set_page_config(page_title="PhotoBook Master Pro V5.1", layout="wide")
+# --- 1. SETUP E COORDINATE DEFINITIVE ---
+st.set_page_config(page_title="PhotoBook Master Pro V5.2", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
@@ -17,7 +17,7 @@ if 'coords' not in st.session_state:
         "base_orizzontale_temi_app.jpg": [18.9, 9.4, 61.8, 83.0],
         "base_orizzontale_temi_app3.jpg": [18.7, 9.4, 62.2, 82.6],
         "base_quadrata_temi_app.jpg": [27.8, 10.8, 44.5, 79.0],
-        "30x30-crea la tua grafica.jpg": [0.0, 0.0, 100.0, 100.0], # Default statico
+        "30x30-crea la tua grafica.jpg": [0.0, 0.0, 100.0, 100.0], 
     }
 
 if 'uploader_key' not in st.session_state:
@@ -71,11 +71,13 @@ def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
 
 def get_manual_cat(filename):
     fn = filename.lower()
-    # Logica di smistamento rinforzata
+    # VERTICALI
     if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]): 
         return "Verticali"
-    if any(x in fn for x in ["orizzontale", "20x15", "27x20"]): 
+    # ORIZZONTALI (Aggiunti 32x24 e 40x30)
+    if any(x in fn for x in ["orizzontale", "20x15", "27x20", "32x24", "40x30"]): 
         return "Orizzontali"
+    # QUADRATI
     if any(x in fn for x in ["quadrata", "20x20", "30x30", "crea la tua grafica"]): 
         return "Quadrati"
     return "Altro"
@@ -87,26 +89,22 @@ def load_lib():
     if os.path.exists(path):
         for f in os.listdir(path):
             if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-                try:
-                    img = Image.open(os.path.join(path, f))
-                    lib["Tutti"][f] = img
-                    cat = get_manual_cat(f)
-                    lib[cat][f] = img
-                except:
-                    pass
+                img = Image.open(os.path.join(path, f))
+                lib["Tutti"][f] = img
+                cat = get_manual_cat(f)
+                lib[cat][f] = img
     return lib
 
 libreria = load_lib()
 
 # --- 3. INTERFACCIA ---
-st.title("📖 PhotoBook Master V5.1")
+st.title("📖 PhotoBook Master V5.2")
 
-# Sidebar di stato per debugging veloce
 with st.sidebar:
     st.header("📊 Stato Libreria")
     for cat in ["Verticali", "Orizzontali", "Quadrati", "Altro"]:
         st.write(f"{cat}: **{len(libreria[cat])}** template")
-    if st.button("🔄 Ricarica Template"):
+    if st.button("🔄 Aggiorna"):
         st.cache_data.clear()
         st.rerun()
 
@@ -117,15 +115,15 @@ with tab_prod:
     c_ctrl, c_up = st.columns([1, 2])
     with c_ctrl:
         formato = st.radio("Categoria:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-        blur_val = st.slider("Sfocatura Bordi (px):", 0.0, 15.0, 5.0, 0.5, key="blur_prod")
-        if st.button("🗑️ SVUOTA DESIGN"):
+        blur_val = st.slider("Morbidezza (px):", 0.0, 15.0, 5.0, 0.5, key="blur_prod")
+        if st.button("🗑️ SVUOTA TUTTO"):
             st.session_state.uploader_key += 1
             st.rerun()
     with c_up:
-        disegni = st.file_uploader("Carica copertine:", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
+        disegni = st.file_uploader("Carica design:", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
 
     if disegni and libreria[formato]:
-        if st.button("🚀 GENERA E SCARICA ZIP"):
+        if st.button("🚀 GENERA ZIP"):
             zip_io = io.BytesIO()
             with zipfile.ZipFile(zip_io, "a") as zf:
                 bar = st.progress(0)
@@ -143,27 +141,26 @@ with tab_prod:
                             zf.writestr(f"{d_fn}/{t_name}.jpg", buf.getvalue())
                         curr += 1
                         bar.progress(curr/total)
-            st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), "Mockups_Finali.zip")
+            st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), "Mockups.zip")
         
         t_pre = list(libreria[formato].keys())[0]
-        st.subheader(f"Anteprima su {t_pre}")
         st.image(process_mockup(libreria[formato][t_pre], Image.open(disegni[-1]), t_pre, blur_val), use_column_width=True)
 
 # --- TAB IMPOSTAZIONI ---
 with tab_sett:
-    st.subheader("🛠️ Calibrazione Template")
+    st.subheader("⚙️ Calibrazione Coordinate")
     c_sel, c_in = st.columns([1, 1])
     with c_sel:
         t_mod = st.selectbox("Template da regolare:", list(libreria["Tutti"].keys()))
-        t_cov = st.file_uploader("Carica cover di test:", type=['jpg', 'png'], key="cov_test")
-        blur_test = st.slider("Test Sfocatura Bordi (px):", 0.0, 15.0, 5.0, 0.5, key="blur_sett")
+        t_cov = st.file_uploader("Cover test:", type=['jpg', 'png'], key="cov_test")
+        blur_test = st.slider("Test Morbidezza (px):", 0.0, 15.0, 5.0, 0.5, key="blur_sett")
     with c_in:
         if t_mod not in st.session_state.coords: st.session_state.coords[t_mod] = [0.0, 0.0, 100.0, 100.0]
         c1, c2 = st.columns(2)
-        st.session_state.coords[t_mod][0] = c1.number_input("X Start %", value=st.session_state.coords[t_mod][0], step=0.1)
-        st.session_state.coords[t_mod][2] = c1.number_input("Larghezza %", value=st.session_state.coords[t_mod][2], step=0.1)
-        st.session_state.coords[t_mod][1] = c2.number_input("Y Start %", value=st.session_state.coords[t_mod][1], step=0.1)
-        st.session_state.coords[t_mod][3] = c2.number_input("Altezza %", value=st.session_state.coords[t_mod][3], step=0.1)
+        st.session_state.coords[t_mod][0] = c1.number_input("X %", value=st.session_state.coords[t_mod][0], step=0.1)
+        st.session_state.coords[t_mod][2] = c1.number_input("W %", value=st.session_state.coords[t_mod][2], step=0.1)
+        st.session_state.coords[t_mod][1] = c2.number_input("Y %", value=st.session_state.coords[t_mod][1], step=0.1)
+        st.session_state.coords[t_mod][3] = c2.number_input("H %", value=st.session_state.coords[t_mod][3], step=0.1)
         st.code(f"'{t_mod}': {st.session_state.coords[t_mod]},")
     if t_cov:
         st.divider()
