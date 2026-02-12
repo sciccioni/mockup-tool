@@ -93,34 +93,53 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     target_w = bx2 - bx1 + 1
     target_h = by2 - by1 + 1
     
-    # --- LOGICA SPECIALE PER TEMPLATE TEMI_APP ---
+    # --- LOGICA SPECIALE PER TEMPLATE TEMI_APP CON OMBRE ---
     if "temi_app" in template_name.lower():
-        # Template temi_app: usa rilevamento normale ma aumenta bleed per coprire ombre
-        # La banda scura è un'ombra INTERNA che deve essere coperta
+        # Template temi_app hanno ombre grigie ai bordi che NON vanno coperte
+        # Trova SOLO il rettangolo bianco centrale
         
-        # Uso la region già rilevata normalmente
-        target_w = bx2 - bx1 + 1
-        target_h = by2 - by1 + 1
+        # Calcolo luminosità media per ogni riga e colonna
+        col_brightness = np.mean(tmpl_gray, axis=0)
+        row_brightness = np.mean(tmpl_gray, axis=1)
         
-        # OVER-BLEEDING ENORME per coprire completamente anche le ombre interne
-        bleed = 20
+        # Trovo colonne molto bianche (>235)
+        white_cols = col_brightness > 235
+        if not white_cols.any():
+            white_cols = col_brightness > 220  # Fallback con threshold più basso
+        
+        white_rows = row_brightness > 235
+        if not white_rows.any():
+            white_rows = row_brightness > 220
+        
+        if not white_cols.any() or not white_rows.any():
+            # Se non trovo niente, uso logica normale
+            return None
+        
+        app_bx1 = np.where(white_cols)[0][0]
+        app_bx2 = np.where(white_cols)[0][-1]
+        app_by1 = np.where(white_rows)[0][0]
+        app_by2 = np.where(white_rows)[0][-1]
+        
+        app_w = app_bx2 - app_bx1 + 1
+        app_h = app_by2 - app_by1 + 1
+        
+        bleed = 20  # Over-bleeding grande
         
         cover_big = np.array(
             Image.fromarray(cover.astype(np.uint8)).resize(
-                (target_w + bleed*2, target_h + bleed*2), Image.LANCZOS
+                (app_w + bleed*2, app_h + bleed*2), Image.LANCZOS
             )
         ).astype(np.float64)
         
-        cover_final = cover_big[bleed:bleed+target_h, bleed:bleed+target_w]
+        cover_final = cover_big[bleed:bleed+app_h, bleed:bleed+app_w]
         
         result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
         
-        book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
-        # Uso ratio più permissivo per non scurire troppo nelle zone d'ombra
-        book_ratio = np.minimum(book_tmpl / 200.0, 1.2)
+        book_tmpl = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
+        book_ratio = np.minimum(book_tmpl / 246.0, 1.0)
         
         for c in range(3):
-            result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
+            result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * book_ratio
             
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
     
