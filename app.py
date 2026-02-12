@@ -6,20 +6,19 @@ import io
 import zipfile
 
 # --- 1. SETUP E COORDINATE DEFINITIVE ---
-st.set_page_config(page_title="PhotoBook Master Pro V5.4", layout="wide")
+st.set_page_config(page_title="PhotoBook Master Pro V5.5", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
-        # Template Piatti (100% statici)
+        # Template Piatti (100% statici, NO BLENDING)
         "base_copertina_verticale.jpg": [0.0, 0.0, 100.0, 100.0],
         "base_copertina_orizzontale.jpg": [0.0, 0.0, 100.0, 100.0],
-        # Template App (Coordinate calibrate)
+        # Template App (Coordinate calibrate, SI BLENDING)
         "base_verticale_temi_app.jpg": [34.6, 9.2, 30.2, 80.3],
         "base_bottom_app.jpg": [21.9, 4.9, 56.5, 91.3],
         "base_orizzontale_temi_app.jpg": [18.9, 9.4, 61.8, 83.0],
         "base_orizzontale_temi_app3.jpg": [18.7, 9.4, 62.2, 82.6],
         "base_quadrata_temi_app.jpg": [27.8, 10.8, 44.5, 79.0],
-        # IL 30x30 È STATO RIMOSSO DA QUI COSÌ NON È PIÙ STATICO E USA IL BLENDING
     }
 
 if 'uploader_key' not in st.session_state:
@@ -47,6 +46,7 @@ def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
         x1, y1 = int((px * w) / 100), int((py * h) / 100)
         tw, th = int((pw * w) / 100), int((ph * h) / 100)
         face_val = 255.0
+        # CONTROLLO CRITICO: Se è esattamente 0,0,100,100 diventa statico (no ombre)
         if px == 0.0 and py == 0.0 and pw == 100.0 and ph == 100.0:
             is_static_cover = True
     else:
@@ -69,6 +69,7 @@ def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
     if is_static_cover:
         shadow_map = np.ones((th, tw, 1), dtype=np.float64)
     else:
+        # Blending attivo
         shadow_map = np.clip(tmpl_gray[y1:y1+th, x1:x1+tw] / face_val, 0.0, 1.0)
         shadow_map = np.expand_dims(shadow_map, axis=2)
 
@@ -102,7 +103,7 @@ def load_lib():
 libreria = load_lib()
 
 # --- 3. INTERFACCIA ---
-st.title("📖 PhotoBook Master V5.4")
+st.title("📖 PhotoBook Master V5.5")
 
 with st.sidebar:
     st.header("📊 Stato Libreria")
@@ -159,12 +160,16 @@ with tab_sett:
         t_cov = st.file_uploader("Cover test:", type=['jpg', 'png'], key="cov_test")
         blur_test = st.slider("Test Morbidezza (px):", 0.0, 15.0, 5.0, 0.5, key="blur_sett")
     with c_in:
-        if t_mod not in st.session_state.coords: st.session_state.coords[t_mod] = [0.0, 0.0, 100.0, 100.0]
+        # FIX: Inizializza con margini per non attivare la modalità statica
+        if t_mod not in st.session_state.coords: 
+            st.session_state.coords[t_mod] = [5.0, 5.0, 90.0, 90.0] 
+            
         c1, c2 = st.columns(2)
         st.session_state.coords[t_mod][0] = c1.number_input("X %", value=st.session_state.coords[t_mod][0], step=0.1)
         st.session_state.coords[t_mod][2] = c1.number_input("W %", value=st.session_state.coords[t_mod][2], step=0.1)
         st.session_state.coords[t_mod][1] = c2.number_input("Y %", value=st.session_state.coords[t_mod][1], step=0.1)
         st.session_state.coords[t_mod][3] = c2.number_input("H %", value=st.session_state.coords[t_mod][3], step=0.1)
+        st.warning("Non impostare 0,0,100,100 se vuoi mantenere le ombre!")
         st.code(f"'{t_mod}': {st.session_state.coords[t_mod]},")
     if t_cov:
         st.divider()
