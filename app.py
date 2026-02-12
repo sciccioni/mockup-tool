@@ -94,10 +94,10 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         # Resize della cover
         cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
         
-        # Shadow Map (Multiply blend mode)
+        # Shadow Map (Multiply blend mode) - USA GRAYSCALE A 8-BIT
         tmpl_gray_u8 = np.array(tmpl_pil.convert('L')).astype(np.float64)
         book_shadows = tmpl_gray_u8[y1:y1+th, x1:x1+tw]
-        shadow_map = np.clip(book_shadows / 250.0, 0, 1.0)
+        shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)  # DIVISO 255 NON 250!
         
         # Composizione
         result = tmpl_rgb.copy()
