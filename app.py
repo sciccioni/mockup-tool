@@ -373,7 +373,8 @@ if menu == "📚 Templates":
 
 elif menu == "🎯 Calibrazione Coordinate":
     st.header("🎯 Calibrazione Coordinate Template")
-    st.info("Usa questo tool per regolare le coordinate di qualsiasi template usando il metodo PRECISION.")
+    
+    st.info("💡 **Modalità di lavoro:** Le modifiche che fai qui sono visibili SOLO A TE nella tua sessione. Altri utenti non vedono le tue modifiche. Le coordinate vengono salvate SOLO quando premi il pulsante 'SALVA COORDINATE'.")
     
     # Ottiene TUTTI i template dalla cartella
     all_template_names = get_all_template_names()
@@ -412,7 +413,7 @@ elif menu == "🎯 Calibrazione Coordinate":
                     px, py, pw, ph = 20.0, 10.0, 60.0, 80.0
                     st.warning(f"⚠️ Template NON calibrato - Usa il metodo automatico. Imposta coordinate per usare PRECISION.")
                 
-                st.subheader("Coordinate Attuali")
+                st.subheader("Coordinate Salvate sul Server")
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("X (%)", f"{px:.1f}")
@@ -439,119 +440,11 @@ elif menu == "🎯 Calibrazione Coordinate":
                 if 'test_image' not in st.session_state:
                     st.session_state.test_image = None
                 
-                # Controlli di precisione
-                st.subheader("Modifica Coordinate")
-                
-                # Controlli X Position
-                col_x = st.columns([2, 1, 1, 6, 1, 1])
-                with col_x[0]:
-                    st.write("**X Position (%)**")
-                with col_x[1]:
-                    if st.button("−", key="x_minus", help="Decrementa X di 0.1%"):
-                        st.session_state.cal_px = max(0.0, st.session_state.cal_px - 0.1)
-                        st.rerun()
-                with col_x[2]:
-                    if st.button("+", key="x_plus", help="Incrementa X di 0.1%"):
-                        st.session_state.cal_px = min(100.0, st.session_state.cal_px + 0.1)
-                        st.rerun()
-                with col_x[3]:
-                    new_px = st.slider("X", 0.0, 100.0, st.session_state.cal_px, 0.1, key='px_slider', label_visibility="collapsed")
-                    if new_px != st.session_state.cal_px:
-                        st.session_state.cal_px = new_px
-                        st.rerun()
-                with col_x[5]:
-                    st.code(f"{st.session_state.cal_px:.1f}%")
-                
-                # Controlli Y Position
-                col_y = st.columns([2, 1, 1, 6, 1, 1])
-                with col_y[0]:
-                    st.write("**Y Position (%)**")
-                with col_y[1]:
-                    if st.button("−", key="y_minus", help="Decrementa Y di 0.1%"):
-                        st.session_state.cal_py = max(0.0, st.session_state.cal_py - 0.1)
-                        st.rerun()
-                with col_y[2]:
-                    if st.button("+", key="y_plus", help="Incrementa Y di 0.1%"):
-                        st.session_state.cal_py = min(100.0, st.session_state.cal_py + 0.1)
-                        st.rerun()
-                with col_y[3]:
-                    new_py = st.slider("Y", 0.0, 100.0, st.session_state.cal_py, 0.1, key='py_slider', label_visibility="collapsed")
-                    if new_py != st.session_state.cal_py:
-                        st.session_state.cal_py = new_py
-                        st.rerun()
-                with col_y[5]:
-                    st.code(f"{st.session_state.cal_py:.1f}%")
-                
-                # Controlli Width
-                col_w = st.columns([2, 1, 1, 6, 1, 1])
-                with col_w[0]:
-                    st.write("**Width (%)**")
-                with col_w[1]:
-                    if st.button("−", key="w_minus", help="Decrementa Width di 0.1%"):
-                        st.session_state.cal_pw = max(1.0, st.session_state.cal_pw - 0.1)
-                        st.rerun()
-                with col_w[2]:
-                    if st.button("+", key="w_plus", help="Incrementa Width di 0.1%"):
-                        st.session_state.cal_pw = min(100.0, st.session_state.cal_pw + 0.1)
-                        st.rerun()
-                with col_w[3]:
-                    new_pw = st.slider("W", 1.0, 100.0, st.session_state.cal_pw, 0.1, key='pw_slider', label_visibility="collapsed")
-                    if new_pw != st.session_state.cal_pw:
-                        st.session_state.cal_pw = new_pw
-                        st.rerun()
-                with col_w[5]:
-                    st.code(f"{st.session_state.cal_pw:.1f}%")
-                
-                # Controlli Height
-                col_h = st.columns([2, 1, 1, 6, 1, 1])
-                with col_h[0]:
-                    st.write("**Height (%)**")
-                with col_h[1]:
-                    if st.button("−", key="h_minus", help="Decrementa Height di 0.1%"):
-                        st.session_state.cal_ph = max(1.0, st.session_state.cal_ph - 0.1)
-                        st.rerun()
-                with col_h[2]:
-                    if st.button("+", key="h_plus", help="Incrementa Height di 0.1%"):
-                        st.session_state.cal_ph = min(100.0, st.session_state.cal_ph + 0.1)
-                        st.rerun()
-                with col_h[3]:
-                    new_ph = st.slider("H", 1.0, 100.0, st.session_state.cal_ph, 0.1, key='ph_slider', label_visibility="collapsed")
-                    if new_ph != st.session_state.cal_ph:
-                        st.session_state.cal_ph = new_ph
-                        st.rerun()
-                with col_h[5]:
-                    st.code(f"{st.session_state.cal_ph:.1f}%")
-                
-                st.divider()
-                
-                # Controlli Offset bordi
-                st.subheader("Offset Bordi (Sfocatura)")
-                col_off = st.columns([2, 1, 1, 6, 1, 1])
-                with col_off[0]:
-                    st.write("**Border Offset (px)**")
-                with col_off[1]:
-                    if st.button("−", key="off_minus", help="Decrementa offset di 1px"):
-                        st.session_state.cal_offset = max(0, st.session_state.cal_offset - 1)
-                        st.rerun()
-                with col_off[2]:
-                    if st.button("+", key="off_plus", help="Incrementa offset di 1px"):
-                        st.session_state.cal_offset = min(20, st.session_state.cal_offset + 1)
-                        st.rerun()
-                with col_off[3]:
-                    new_offset = st.slider("Offset", 0, 20, st.session_state.cal_offset, 1, key='off_slider', label_visibility="collapsed")
-                    if new_offset != st.session_state.cal_offset:
-                        st.session_state.cal_offset = new_offset
-                        st.rerun()
-                with col_off[5]:
-                    st.code(f"{st.session_state.cal_offset}px")
-                
-                st.divider()
-                
-                # Carica immagine di test
-                st.subheader("Immagine di Test con Multiply Blend")
+                # Carica immagine di test PRIMA dei controlli
+                st.subheader("📸 Immagine di Test con Multiply Blend")
                 col_upload, col_remove = st.columns([3, 1])
                 with col_upload:
-                    test_upload = st.file_uploader("Carica un'immagine per vedere l'anteprima BLENDED", type=['jpg', 'jpeg', 'png'], key='test_img_upload')
+                    test_upload = st.file_uploader("Carica un'immagine per vedere l'anteprima BLENDED in tempo reale", type=['jpg', 'jpeg', 'png'], key='test_img_upload')
                     if test_upload:
                         st.session_state.test_image = Image.open(test_upload)
                 
@@ -561,69 +454,131 @@ elif menu == "🎯 Calibrazione Coordinate":
                             st.session_state.test_image = None
                             st.rerun()
                 
-                # Visualizzazione
                 st.divider()
-                st.subheader("Anteprima con Multiply Blend")
                 
-                if st.session_state.test_image is not None:
-                    # Mostra l'anteprima con l'immagine di test BLENDED
-                    preview_img = apply_test_image_blended(
-                        template_img, 
-                        st.session_state.test_image,
-                        st.session_state.cal_px, 
-                        st.session_state.cal_py, 
-                        st.session_state.cal_pw, 
-                        st.session_state.cal_ph,
-                        st.session_state.cal_offset
-                    )
-                    st.image(preview_img, caption=f"Anteprima BLENDED (Offset: {st.session_state.cal_offset}px)", use_column_width=True)
-                else:
-                    st.info("Carica un'immagine di test per vedere l'anteprima con multiply blend")
-                    st.image(template_img, caption="Template originale", use_column_width=True)
+                # Layout a due colonne: controlli a sinistra, anteprima a destra
+                col_controls, col_preview = st.columns([1, 1])
                 
-                # Test con design reale
-                st.divider()
-                st.subheader("Test Rendering Completo")
-                test_design = st.file_uploader("Carica un design per testare il rendering finale", type=['jpg', 'jpeg', 'png'], key='final_test')
+                with col_controls:
+                    st.subheader("🎚️ Controlli")
+                    
+                    # Controlli X Position
+                    st.write("**X Position (%)**")
+                    col_x = st.columns([1, 1, 6, 1])
+                    with col_x[0]:
+                        if st.button("−", key="x_minus", help="Decrementa X di 0.1%"):
+                            st.session_state.cal_px = max(0.0, st.session_state.cal_px - 0.1)
+                            st.rerun()
+                    with col_x[1]:
+                        if st.button("+", key="x_plus", help="Incrementa X di 0.1%"):
+                            st.session_state.cal_px = min(100.0, st.session_state.cal_px + 0.1)
+                            st.rerun()
+                    with col_x[2]:
+                        new_px = st.slider("X", 0.0, 100.0, st.session_state.cal_px, 0.1, key='px_slider', label_visibility="collapsed")
+                        st.session_state.cal_px = new_px
+                    with col_x[3]:
+                        st.code(f"{st.session_state.cal_px:.1f}")
+                    
+                    # Controlli Y Position
+                    st.write("**Y Position (%)**")
+                    col_y = st.columns([1, 1, 6, 1])
+                    with col_y[0]:
+                        if st.button("−", key="y_minus", help="Decrementa Y di 0.1%"):
+                            st.session_state.cal_py = max(0.0, st.session_state.cal_py - 0.1)
+                            st.rerun()
+                    with col_y[1]:
+                        if st.button("+", key="y_plus", help="Incrementa Y di 0.1%"):
+                            st.session_state.cal_py = min(100.0, st.session_state.cal_py + 0.1)
+                            st.rerun()
+                    with col_y[2]:
+                        new_py = st.slider("Y", 0.0, 100.0, st.session_state.cal_py, 0.1, key='py_slider', label_visibility="collapsed")
+                        st.session_state.cal_py = new_py
+                    with col_y[3]:
+                        st.code(f"{st.session_state.cal_py:.1f}")
+                    
+                    # Controlli Width
+                    st.write("**Width (%)**")
+                    col_w = st.columns([1, 1, 6, 1])
+                    with col_w[0]:
+                        if st.button("−", key="w_minus", help="Decrementa Width di 0.1%"):
+                            st.session_state.cal_pw = max(1.0, st.session_state.cal_pw - 0.1)
+                            st.rerun()
+                    with col_w[1]:
+                        if st.button("+", key="w_plus", help="Incrementa Width di 0.1%"):
+                            st.session_state.cal_pw = min(100.0, st.session_state.cal_pw + 0.1)
+                            st.rerun()
+                    with col_w[2]:
+                        new_pw = st.slider("W", 1.0, 100.0, st.session_state.cal_pw, 0.1, key='pw_slider', label_visibility="collapsed")
+                        st.session_state.cal_pw = new_pw
+                    with col_w[3]:
+                        st.code(f"{st.session_state.cal_pw:.1f}")
+                    
+                    # Controlli Height
+                    st.write("**Height (%)**")
+                    col_h = st.columns([1, 1, 6, 1])
+                    with col_h[0]:
+                        if st.button("−", key="h_minus", help="Decrementa Height di 0.1%"):
+                            st.session_state.cal_ph = max(1.0, st.session_state.cal_ph - 0.1)
+                            st.rerun()
+                    with col_h[1]:
+                        if st.button("+", key="h_plus", help="Incrementa Height di 0.1%"):
+                            st.session_state.cal_ph = min(100.0, st.session_state.cal_ph + 0.1)
+                            st.rerun()
+                    with col_h[2]:
+                        new_ph = st.slider("H", 1.0, 100.0, st.session_state.cal_ph, 0.1, key='ph_slider', label_visibility="collapsed")
+                        st.session_state.cal_ph = new_ph
+                    with col_h[3]:
+                        st.code(f"{st.session_state.cal_ph:.1f}")
+                    
+                    st.divider()
+                    
+                    # Controlli Offset bordi
+                    st.write("**Border Offset (px)**")
+                    col_off = st.columns([1, 1, 6, 1])
+                    with col_off[0]:
+                        if st.button("−", key="off_minus", help="Decrementa offset di 1px"):
+                            st.session_state.cal_offset = max(0, st.session_state.cal_offset - 1)
+                            st.rerun()
+                    with col_off[1]:
+                        if st.button("+", key="off_plus", help="Incrementa offset di 1px"):
+                            st.session_state.cal_offset = min(20, st.session_state.cal_offset + 1)
+                            st.rerun()
+                    with col_off[2]:
+                        new_offset = st.slider("Offset", 0, 20, st.session_state.cal_offset, 1, key='off_slider', label_visibility="collapsed")
+                        st.session_state.cal_offset = new_offset
+                    with col_off[3]:
+                        st.code(f"{st.session_state.cal_offset}px")
                 
-                if test_design:
-                    design_img = Image.open(test_design)
+                with col_preview:
+                    st.subheader("👁️ Anteprima Live")
                     
-                    # Crea coordinate temporanee
-                    temp_maps = TEMPLATE_MAPS.copy()
-                    temp_maps[selected_template] = (st.session_state.cal_px, st.session_state.cal_py, 
-                                                    st.session_state.cal_pw, st.session_state.cal_ph)
-                    
-                    # Salva temporaneamente
-                    old_maps = TEMPLATE_MAPS.copy()
-                    TEMPLATE_MAPS.update(temp_maps)
-                    
-                    # Genera anteprima con offset
-                    result = composite_v3_fixed(template_img, design_img, selected_template, st.session_state.cal_offset)
-                    
-                    # Ripristina
-                    TEMPLATE_MAPS.update(old_maps)
-                    
-                    if result:
-                        col_before, col_after = st.columns(2)
-                        with col_before:
-                            st.write("**Template Originale**")
-                            st.image(template_img, use_column_width=True)
-                        with col_after:
-                            st.write(f"**Con Design Applicato (Offset: {st.session_state.cal_offset}px)**")
-                            st.image(result, use_column_width=True)
+                    if st.session_state.test_image is not None:
+                        # Mostra l'anteprima con l'immagine di test BLENDED
+                        preview_img = apply_test_image_blended(
+                            template_img, 
+                            st.session_state.test_image,
+                            st.session_state.cal_px, 
+                            st.session_state.cal_py, 
+                            st.session_state.cal_pw, 
+                            st.session_state.cal_ph,
+                            st.session_state.cal_offset
+                        )
+                        st.image(preview_img, caption=f"Anteprima BLENDED (Offset: {st.session_state.cal_offset}px)", use_column_width=True)
+                    else:
+                        st.info("⬆️ Carica un'immagine di test sopra per vedere l'anteprima in tempo reale")
+                        st.image(template_img, caption="Template originale", use_column_width=True)
                 
                 st.divider()
                 
                 # Pulsanti di azione
                 col_save, col_remove = st.columns(2)
                 with col_save:
-                    if st.button("💾 SALVA COORDINATE", type="primary"):
+                    if st.button("💾 SALVA COORDINATE SUL SERVER", type="primary"):
                         TEMPLATE_MAPS[selected_template] = (st.session_state.cal_px, st.session_state.cal_py, 
                                                             st.session_state.cal_pw, st.session_state.cal_ph)
                         save_template_maps(TEMPLATE_MAPS)
-                        st.success(f"✅ Coordinate salvate per {selected_template}!")
-                        st.info(f"Ora questo template userà il metodo PRECISION con offset {st.session_state.cal_offset}px sui bordi.")
+                        st.success(f"✅ Coordinate salvate PERMANENTEMENTE per {selected_template}!")
+                        st.info(f"Ora TUTTI gli utenti useranno queste coordinate con offset {st.session_state.cal_offset}px.")
                         st.balloons()
                 
                 with col_remove:
