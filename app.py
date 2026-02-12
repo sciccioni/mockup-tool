@@ -70,60 +70,53 @@ def find_book_region(tmpl_gray, bg_val):
     }
 
 def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
-    tmpl = np.array(tmpl_pil).astype(np.float64)
-    
-    if tmpl.ndim == 3:
-        tmpl_gray = (0.299 * tmpl[:,:,0] + 0.587 * tmpl[:,:,1] + 0.114 * tmpl[:,:,2])
-    else:
-        tmpl_gray = tmpl
-        
+    # Carichiamo tutto in RGB
+    tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
+    tmpl_gray = (0.299 * tmpl_rgb[:,:,0] + 0.587 * tmpl_rgb[:,:,1] + 0.114 * tmpl_rgb[:,:,2])
     h, w = tmpl_gray.shape
     cover = np.array(cover_pil.convert('RGB')).astype(np.float64)
     
-    # --- LOGICA SPECIALE PER TEMPLATE TEMI_APP (AMSTERDAM FIXED) ---
-    if "temi_app" in template_name.lower():
-        col_brightness = np.mean(tmpl_gray, axis=0)
-        row_brightness = np.mean(tmpl_gray, axis=1)
+    # --- LOGICA DEDICATA PER TEMPLATE APP (LIBRO BIANCO SU SFONDO CHIARO) ---
+    if "app" in template_name.lower():
+        # 1. Troviamo l'area del libro. Essendo tutto chiaro, 
+        # cerchiamo la zona con la luminosità massima (il libro è più bianco dello sfondo)
+        threshold = np.max(tmpl_gray) * 0.98 
+        mask = tmpl_gray > threshold
         
-        # Soglia dinamica per isolare il libro bianco dallo sfondo crema
-        dynamic_threshold = np.max(tmpl_gray) * 0.92
+        # Pulizia della maschera per isolare solo il blocco centrale
+        rows = np.any(mask, axis=1)
+        cols = np.any(mask, axis=0)
         
-        white_cols = col_brightness > dynamic_threshold
-        white_rows = row_brightness > dynamic_threshold
-        
-        if not white_cols.any() or not white_rows.any():
+        if not rows.any() or not cols.any():
             return None
+            
+        y1, y2 = np.where(rows)[0][[0, -1]]
+        x1, x2 = np.where(cols)[0][[0, -1]]
         
-        # ESPANSIONE: Sottraiamo/Aggiungiamo 3px per "infilare" la cover sotto le ombre
-        app_bx1 = max(0, np.where(white_cols)[0][0] - 3)
-        app_bx2 = min(w - 1, np.where(white_cols)[0][-1] + 3)
-        app_by1 = max(0, np.where(white_rows)[0][0] - 3)
-        app_by2 = min(h - 1, np.where(white_rows)[0][-1] + 3)
+        # Margine di sicurezza: rientriamo di 1px per non avere sbavature
+        y1, y2, x1, x2 = y1+1, y2-1, x1+1, x2-1
         
-        app_w = app_bx2 - app_bx1 + 1
-        app_h = app_by2 - app_by1 + 1
+        tw, th = (x2 - x1 + 1), (y2 - y1 + 1)
         
-        # Resize della copertina
-        cover_final = np.array(
-            Image.fromarray(cover.astype(np.uint8)).resize((app_w, app_h), Image.LANCZOS)
-        ).astype(np.float64)
+        # 2. Adattiamo la copertina all'area trovata
+        cover_res = np.array(Image.fromarray(cover.astype(np.uint8)).resize((tw, th), Image.LANCZOS)).astype(np.float64)
         
-        # Creiamo il risultato partendo dal template originale (per mantenere lo sfondo crema)
-        result = tmpl.copy()
+        # 3. CREAZIONE DEL RISULTATO (Senza distruggere lo sfondo)
+        result = tmpl_rgb.copy()
         
-        # Prendiamo l'area del libro dal template per usarla come mappa di ombre
-        book_tmpl_area = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
-        
-        # Normalizziamo a 255 per la moltiplicazione (Multiply blend mode)
-        shadow_map = np.clip(book_tmpl_area / 255.0, 0, 1.0)
+        # 4. APPLICAZIONE OMBRE (MULTIPLY)
+        # Usiamo l'area del libro originale come mappa per le ombre (rilegatura, pieghe)
+        book_area_gray = tmpl_gray[y1:y2+1, x1:x2+1]
+        shadow_map = np.clip(book_area_gray / 255.0, 0, 1.0)
         
         for c in range(3):
-            # Moltiplichiamo i pixel della cover per le ombre originali del libro
-            result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * shadow_map
+            # Inseriamo la copertina solo nelle coordinate del libro
+            # moltiplicandola per shadow_map così si vedono le ombre della rilegatura
+            result[y1:y2+1, x1:x2+1, c] = cover_res[:, :, c] * shadow_map
             
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
-
-    # --- RESTO DELLA LOGICA (per gli altri template) ---
+    
+    # --- LOGICA PER ALTRI TEMPLATE (MANTIENI QUELLA CHE FUNZIONA) ---
     corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
     bg_val = float(np.median(corners))
     
@@ -255,39 +248,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
             
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-
-# --- CARICAMENTO ---
-@st.cache_data
-def load_fixed_templates():
-    lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
-    base_path = "templates"
-    
-    if not os.path.exists(base_path):
-        return lib
-    
-    for f_name in os.listdir(base_path):
-        if f_name.lower().endswith(('.jpg', '.jpeg', '.png')):
-            cat = get_manual_cat(f_name)
-            if cat in lib:
-                try:
-                    img = Image.open(os.path.join(base_path, f_name)).convert('RGB')
-                    lib[cat][f_name] = img
-                except:
-                    pass
-    
-    return lib
-
-@st.cache_data
-def get_template_thumbnails():
-    lib = load_fixed_templates()
-    thumbs = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}}
-    thumb_width, thumb_height = 300, 300
-    
-    for cat in lib:
-        for fname, img in lib[cat].items():
-            thumb = Image.new('RGB', (thumb_width, thumb_height), (240, 240, 240))
-            img_aspect = img.width / img.height
-            thumb_aspect = thumb_width / thumb_height
             
             if img_aspect > thumb_aspect:
                 new_width = thumb_width
