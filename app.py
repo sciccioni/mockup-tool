@@ -5,7 +5,7 @@ import os
 import io
 import zipfile
 
-# --- 1. COORDINATE DI PARTENZA ---
+# --- 1. COORDINATE DI PARTENZA (MEMORIA) ---
 TEMPLATE_MAPS = {
     "base_verticale_temi_app": (35.1, 10.4, 29.8, 79.2),
     "base_orizzontale_temi_app": (19.4, 9.4, 61.2, 81.2),
@@ -25,7 +25,7 @@ def process_mockup(tmpl_pil, cover_pil, x_pct, y_pct, w_pct, h_pct):
     
     cover_res = np.array(cover_pil.convert('RGB').resize((tw, th), Image.LANCZOS)).astype(np.float64)
     
-    # Shadow Map (Multiply) per le ombre della rilegatura
+    # Shadow Map (Multiply) per il realismo della carta e delle pieghe
     book_shadows = tmpl_gray[y1:y1+th, x1:x1+tw]
     shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
     
@@ -43,8 +43,8 @@ def get_manual_cat(filename):
     return "Altro"
 
 # --- 3. INTERFACCIA STREAMLIT ---
-st.set_page_config(page_title="Mockup Ultra-Precision", layout="wide")
-st.title("📖 PhotoBook Mockup - Controllo Totale")
+st.set_page_config(page_title="Mockup Precision Input", layout="wide")
+st.title("📖 PhotoBook Mockup - Inserimento Manuale")
 
 @st.cache_data
 def load_lib():
@@ -59,7 +59,7 @@ def load_lib():
 
 libreria = load_lib()
 
-# Tab per vedere i template disponibili
+# Tab dei template
 tabs = st.tabs(["📂 Verticali", "📂 Orizzontali", "📂 Quadrati"])
 for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati"])):
     with tab:
@@ -69,38 +69,39 @@ for i, (tab, name) in enumerate(zip(tabs, ["Verticali", "Orizzontali", "Quadrati
 
 st.divider()
 
-# --- SEZIONE PRODUZIONE CON CURSORI (SLIDER) ---
+# --- SEZIONE CALIBRAZIONE MANUALE ---
 st.subheader("🚀 Configurazione e Produzione")
 
 col_settings, col_upload = st.columns([2, 2])
 
 with col_settings:
-    st.markdown("### 1. Regola Posizione")
+    st.markdown("### 1. Inserimento Coordinate (Pixel %)")
     categoria = st.selectbox("Seleziona Formato:", ["Verticali", "Orizzontali", "Quadrati"])
     
     if libreria[categoria]:
         t_nome = st.selectbox("Scegli Template:", list(libreria[categoria].keys()))
         
-        # Cerca i valori di default nel dizionario
+        # Recupero i valori di default
         app_key = next((k for k in TEMPLATE_MAPS.keys() if k in t_nome.lower()), None)
         defaults = TEMPLATE_MAPS.get(app_key, (0.0, 0.0, 100.0, 100.0))
         
-        # --- ECCO I CAZZO DI CURSORI ---
+        # --- INPUT MANUALI ---
         c1, c2 = st.columns(2)
         with c1:
-            val_x = st.slider("X (Sposta Orizzontale %)", 0.0, 100.0, float(defaults[0]), 0.1)
-            val_w = st.slider("Larghezza (%)", 0.0, 100.0, float(defaults[2]), 0.1)
+            val_x = st.number_input("X (Inizio Orizzontale %)", value=float(defaults[0]), step=0.1, format="%.1f")
+            val_w = st.number_input("Larghezza (%)", value=float(defaults[2]), step=0.1, format="%.1f")
         with c2:
-            val_y = st.slider("Y (Sposta Verticale %)", 0.0, 100.0, float(defaults[1]), 0.1)
-            val_h = st.slider("Altezza (%)", 0.0, 100.0, float(defaults[3]), 0.1)
+            val_y = st.number_input("Y (Inizio Verticale %)", value=float(defaults[1]), step=0.1, format="%.1f")
+            val_h = st.number_input("Altezza (%)", value=float(defaults[3]), step=0.1, format="%.1f")
             
+        st.info("💡 Copia questa riga nel dizionario TEMPLATE_MAPS per salvare:")
         st.code(f"'{t_nome}': ({val_x}, {val_y}, {val_w}, {val_h}),", language='python')
     else:
-        st.warning("Nessun template in questa categoria.")
+        st.warning("Nessun template trovato.")
 
 with col_upload:
     st.markdown("### 2. Carica Design")
-    disegni = st.file_uploader("Trascina qui le copertine:", accept_multiple_files=True)
+    disegni = st.file_uploader("Trascina qui le grafiche:", accept_multiple_files=True)
     
     if disegni and libreria[categoria]:
         if st.button("🚀 GENERA E SCARICA ZIP"):
@@ -114,9 +115,9 @@ with col_upload:
             
             st.download_button("📥 SCARICA ZIP", zip_io.getvalue(), f"Mockups_{t_nome}.zip")
 
-# --- ANTEPRIMA IN TEMPO REALE ---
+# --- ANTEPRIMA ---
 if disegni and libreria[categoria]:
     st.divider()
-    st.subheader("👁️ Anteprima Real-Time")
+    st.subheader("👁️ Anteprima Risultato")
     preview = process_mockup(libreria[categoria][t_nome], Image.open(disegni[-1]), val_x, val_y, val_w, val_h)
     st.image(preview, use_column_width=True)
