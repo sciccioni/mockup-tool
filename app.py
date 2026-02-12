@@ -95,26 +95,31 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     
     # --- LOGICA SPECIALE PER TEMPLATE TEMI_APP CON OMBRE ---
     if "temi_app" in template_name.lower():
-        # Template temi_app hanno ombre grigie ai bordi che NON vanno coperte
-        # Trova SOLO il rettangolo bianco centrale
+        # Template temi_app hanno ombre grigie ai bordi
+        # Devo trovare l'area del libro in modo più intelligente
         
-        # Calcolo luminosità media per ogni riga e colonna
+        # 1. Trovo il picco di luminosità (centro del libro)
         col_brightness = np.mean(tmpl_gray, axis=0)
         row_brightness = np.mean(tmpl_gray, axis=1)
         
-        # Trovo colonne molto bianche (>235)
-        white_cols = col_brightness > 235
-        if not white_cols.any():
-            white_cols = col_brightness > 220  # Fallback con threshold più basso
+        # 2. Threshold ADATTIVO basato sulla media generale
+        overall_brightness = np.mean(tmpl_gray)
+        # Cerco zone che sono almeno il 95% del massimo (molto più tollerante)
+        col_threshold = np.max(col_brightness) * 0.95
+        row_threshold = np.max(row_brightness) * 0.95
         
-        white_rows = row_brightness > 235
-        if not white_rows.any():
-            white_rows = row_brightness > 220
+        white_cols = col_brightness > col_threshold
+        white_rows = row_brightness > row_threshold
         
         if not white_cols.any() or not white_rows.any():
-            # Se non trovo niente, uso logica normale
+            # Fallback: usa l'85% del massimo
+            white_cols = col_brightness > (np.max(col_brightness) * 0.85)
+            white_rows = row_brightness > (np.max(row_brightness) * 0.85)
+        
+        if not white_cols.any() or not white_rows.any():
             return None
         
+        # 3. Trovo i bordi dell'area bianca
         app_bx1 = np.where(white_cols)[0][0]
         app_bx2 = np.where(white_cols)[0][-1]
         app_by1 = np.where(white_rows)[0][0]
@@ -123,7 +128,8 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         app_w = app_bx2 - app_bx1 + 1
         app_h = app_by2 - app_by1 + 1
         
-        bleed = 20  # Over-bleeding grande
+        # 4. Over-bleeding ENORME per coprire anche errori di allineamento
+        bleed = 25
         
         cover_big = np.array(
             Image.fromarray(cover.astype(np.uint8)).resize(
@@ -135,8 +141,14 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
         
         result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
         
+        # 5. Calcolo ratio usando la luminosità MEDIANA dell'area bianca (più robusto)
         book_tmpl = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
-        book_ratio = np.minimum(book_tmpl / 246.0, 1.0)
+        median_brightness = np.median(book_tmpl[book_tmpl > 200])  # Solo pixel chiari
+        
+        if median_brightness > 0:
+            book_ratio = np.minimum(book_tmpl / median_brightness, 1.05)
+        else:
+            book_ratio = np.minimum(book_tmpl / 240.0, 1.05)
         
         for c in range(3):
             result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * book_ratio
