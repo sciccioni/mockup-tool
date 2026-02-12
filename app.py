@@ -5,8 +5,8 @@ import os
 import io
 import zipfile
 
-# --- 1. SETUP E COORDINATE DEFINITIVE ---
-st.set_page_config(page_title="PhotoBook Master Pro V5.0", layout="wide")
+# --- 1. SETUP E COORDINATE (V5.1) ---
+st.set_page_config(page_title="PhotoBook Master Pro V5.1", layout="wide")
 
 if 'coords' not in st.session_state:
     st.session_state.coords = {
@@ -17,6 +17,7 @@ if 'coords' not in st.session_state:
         "base_orizzontale_temi_app.jpg": [18.9, 9.4, 61.8, 83.0],
         "base_orizzontale_temi_app3.jpg": [18.7, 9.4, 62.2, 82.6],
         "base_quadrata_temi_app.jpg": [27.8, 10.8, 44.5, 79.0],
+        "30x30-crea la tua grafica.jpg": [0.0, 0.0, 100.0, 100.0], # Default statico
     }
 
 if 'uploader_key' not in st.session_state:
@@ -70,31 +71,44 @@ def process_mockup(tmpl_pil, cover_pil, t_name, blur_rad):
 
 def get_manual_cat(filename):
     fn = filename.lower()
-    # Verticali
-    if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]): return "Verticali"
-    # Orizzontali
-    if any(x in fn for x in ["orizzontale", "20x15", "27x20"]): return "Orizzontali"
-    # Quadrati (Aggiunto 30x30)
-    if any(x in fn for x in ["quadrata", "20x20", "30x30"]): return "Quadrati"
+    # Logica di smistamento rinforzata
+    if any(x in fn for x in ["verticale", "bottom", "15x22", "20x30"]): 
+        return "Verticali"
+    if any(x in fn for x in ["orizzontale", "20x15", "27x20"]): 
+        return "Orizzontali"
+    if any(x in fn for x in ["quadrata", "20x20", "30x30", "crea la tua grafica"]): 
+        return "Quadrati"
     return "Altro"
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_lib():
     path = "templates"
-    lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}, "Tutti": {}}
+    lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}, "Altro": {}, "Tutti": {}}
     if os.path.exists(path):
         for f in os.listdir(path):
             if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-                img = Image.open(os.path.join(path, f))
-                lib["Tutti"][f] = img
-                cat = get_manual_cat(f)
-                if cat in lib: lib[cat][f] = img
+                try:
+                    img = Image.open(os.path.join(path, f))
+                    lib["Tutti"][f] = img
+                    cat = get_manual_cat(f)
+                    lib[cat][f] = img
+                except:
+                    pass
     return lib
 
 libreria = load_lib()
 
 # --- 3. INTERFACCIA ---
-st.title("📖 PhotoBook Master V5.0")
+st.title("📖 PhotoBook Master V5.1")
+
+# Sidebar di stato per debugging veloce
+with st.sidebar:
+    st.header("📊 Stato Libreria")
+    for cat in ["Verticali", "Orizzontali", "Quadrati", "Altro"]:
+        st.write(f"{cat}: **{len(libreria[cat])}** template")
+    if st.button("🔄 Ricarica Template"):
+        st.cache_data.clear()
+        st.rerun()
 
 tab_prod, tab_sett = st.tabs(["🚀 PRODUZIONE BATCH", "⚙️ IMPOSTAZIONI TEMPLATE"])
 
