@@ -95,42 +95,32 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name=""):
     
     # --- LOGICA SPECIALE PER TEMPLATE TEMI_APP ---
     if "temi_app" in template_name.lower():
-        # Template temi_app: hanno ombre scure che NON vanno coperte
-        # Trova solo l'area bianca del libro
+        # Template temi_app: usa rilevamento normale ma aumenta bleed per coprire ombre
+        # La banda scura è un'ombra INTERNA che deve essere coperta
         
-        # Uso threshold alto per trovare solo pixel molto bianchi
-        white_mask = tmpl_gray > 230
+        # Uso la region già rilevata normalmente
+        target_w = bx2 - bx1 + 1
+        target_h = by2 - by1 + 1
         
-        rows = np.any(white_mask, axis=1)
-        cols = np.any(white_mask, axis=0)
-        
-        if not rows.any() or not cols.any():
-            # Fallback alla logica normale se non trova niente
-            return None
-        
-        app_by1, app_by2 = np.where(rows)[0][[0, -1]]
-        app_bx1, app_bx2 = np.where(cols)[0][[0, -1]]
-        
-        app_w = app_bx2 - app_bx1 + 1
-        app_h = app_by2 - app_by1 + 1
-        
-        bleed = 15
+        # OVER-BLEEDING ENORME per coprire completamente anche le ombre interne
+        bleed = 20
         
         cover_big = np.array(
             Image.fromarray(cover.astype(np.uint8)).resize(
-                (app_w + bleed*2, app_h + bleed*2), Image.LANCZOS
+                (target_w + bleed*2, target_h + bleed*2), Image.LANCZOS
             )
         ).astype(np.float64)
         
-        cover_final = cover_big[bleed:bleed+app_h, bleed:bleed+app_w]
+        cover_final = cover_big[bleed:bleed+target_h, bleed:bleed+target_w]
         
         result = np.stack([tmpl_gray, tmpl_gray, tmpl_gray], axis=2)
         
-        book_tmpl = tmpl_gray[app_by1:app_by2+1, app_bx1:app_bx2+1]
-        book_ratio = np.minimum(book_tmpl / 246.0, 1.0)
+        book_tmpl = tmpl_gray[by1:by2+1, bx1:bx2+1]
+        # Uso ratio più permissivo per non scurire troppo nelle zone d'ombra
+        book_ratio = np.minimum(book_tmpl / 200.0, 1.2)
         
         for c in range(3):
-            result[app_by1:app_by2+1, app_bx1:app_bx2+1, c] = cover_final[:, :, c] * book_ratio
+            result[by1:by2+1, bx1:bx2+1, c] = cover_final[:, :, c] * book_ratio
             
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
     
