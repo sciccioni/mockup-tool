@@ -45,7 +45,7 @@ def load_template_maps():
         },
         # AGGIUNTO IL NUOVO TEMPLATE QUI SOTTO:
         "Fotolibro-Temi-Verticali-temi-2.png": {
-            "coords": (14.5, 4.3, 71.5, 90.8),
+            "coords": (13.7, 3.9, 72.9, 92.3),
             "offset": 1
         }
     }
