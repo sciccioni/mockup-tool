@@ -17,7 +17,7 @@ TEMPLATE_MAPS_FILE = "template_coordinates.json"
 
 def load_template_maps():
     """Carica le coordinate da file JSON o usa quelle di default aggiornate"""
-    # Coordinate HARDCODED aggiornate dal tuo JSON
+    # Coordinate HARDCODED aggiornate
     default_maps = {
         "base_verticale_temi_app.jpg": {
             "coords": (34.4, 9.1, 30.6, 80.4),
@@ -42,6 +42,11 @@ def load_template_maps():
         "15x22-crea la tua grafica.jpg": {
             "coords": (33.1, 21.4, 33.9, 57.0),
             "offset": 2
+        },
+        # AGGIUNTO IL NUOVO TEMPLATE QUI SOTTO:
+        "Fotolibro-Temi-Verticali-temi-2.png": {
+            "coords": (14.5, 4.3, 71.5, 90.8),
+            "offset": 1
         }
     }
     
@@ -78,9 +83,8 @@ TEMPLATE_MAPS = load_template_maps()
 # --- SMISTAMENTO CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
-    if "base_copertina_verticale" in fn: return "Verticali"
-    if "base_verticale_temi_app" in fn: return "Verticali"
-    if "base_bottom_app" in fn: return "Verticali"
+    # Aggiunto "verticali" alla ricerca per catturare il nuovo template
+    if any(x in fn for x in ["base_copertina_verticale", "base_verticale_temi_app", "base_bottom_app", "verticali"]): return "Verticali"
     if "base_copertina_orizzontale" in fn: return "Orizzontali"
     if "base_orizzontale_temi_app" in fn: return "Orizzontali"
     if "base_quadrata_temi_app" in fn: return "Quadrati"
@@ -174,7 +178,10 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         # 3. Applica ombre e fusione
         tmpl_gray_u8 = np.array(tmpl_pil.convert('L')).astype(np.float64)
         book_shadows = tmpl_gray_u8[y1:y1+th, x1:x1+tw]
-        shadow_map = np.clip(book_shadows / 255.0, 0, 1.0)
+        
+        # CORREZIONE WHITE POINT (per evitare l'effetto grigio/sporco)
+        white_point = 235.0 
+        shadow_map = np.clip(book_shadows / white_point, 0, 1.0)
         
         result = tmpl_rgb.copy()
         for c in range(3):
