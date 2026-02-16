@@ -44,7 +44,7 @@ def load_template_maps():
             "offset": 2
         },
         "Fotolibro-Temi-Verticali-temi-2.png": {
-            "coords": (14.5, 4.3, 71.5, 90.8),
+            "coords": (13.6, 4.0, 73.0, 92.0),
             "offset": 1
         }
     }
