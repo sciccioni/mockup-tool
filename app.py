@@ -12,13 +12,12 @@ st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FIXED", layout="
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- FIX CACHE: Rileva modifiche ai file (anche con lo stesso nome) ---
+# --- ANTI-CACHE ---
 def get_folder_hash(folder_path):
-    if not os.path.exists(folder_path):
-        return 0
+    if not os.path.exists(folder_path): return 0
     return sum(os.path.getmtime(os.path.join(folder_path, f)) for f in os.listdir(folder_path))
 
-# --- MAPPING COORDINATE ---
+# --- COORDINATE ---
 TEMPLATE_MAPS_FILE = "template_coordinates.json"
 
 def load_template_maps():
@@ -29,34 +28,29 @@ def load_template_maps():
         "base_quadrata_temi_app.jpg": {"coords": (27.7, 10.5, 44.7, 79.4), "offset": 1},
         "base_bottom_app.jpg": {"coords": (21.8, 4.7, 57.0, 91.7), "offset": 1},
         "15x22-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
-        "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1}
+        "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
+        "base_copertina_verticale.jpg": {"coords": (0, 0, 100, 100), "offset": 0} # Placeholder per auto-detection
     }
     if os.path.exists(TEMPLATE_MAPS_FILE):
         try:
-            with open(TEMPLATE_MAPS_FILE, 'r') as f:
-                return json.load(f)
+            with open(TEMPLATE_MAPS_FILE, 'r') as f: return json.load(f)
         except: return default_maps
     return default_maps
 
 def save_template_maps(maps):
-    with open(TEMPLATE_MAPS_FILE, 'w') as f:
-        json.dump(maps, f, indent=2)
+    with open(TEMPLATE_MAPS_FILE, 'w') as f: json.dump(maps, f, indent=2)
 
 TEMPLATE_MAPS = load_template_maps()
 
-# --- SMISTAMENTO CATEGORIE ---
+# --- CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
-    if "base_copertina_verticale" in fn: return "Verticali"
-    if any(x in fn for x in ["vertical", "15x22", "20x30", "bottom"]): return "Verticali"
+    if any(x in fn for x in ["vertical", "15x22", "20x30", "bottom", "copertina_verticale"]): return "Verticali"
     if any(x in fn for x in ["orizzontal", "20x15", "27x20", "32x24", "40x30"]): return "Orizzontali"
     if any(x in fn for x in ["quadrat", "20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
-# ===================================================================
-# LOGICA CORE TOTALE (NON MANCA NULLA)
-# ===================================================================
-
+# --- CORE LOGIC ---
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 3)
@@ -68,180 +62,165 @@ def find_book_region(tmpl_gray, bg_val):
     row = tmpl_gray[mid_y]
     face_x1 = bx1
     for x in range(bx1, bx2 - 5):
-        if np.all(row[x:x + 5] >= 240):
-            face_x1 = x
-            break
-    margin = 30
-    face_area = tmpl_gray[by1+margin:by2-margin, face_x1+margin:bx2-margin]
-    face_val = float(np.median(face_area)) if face_area.size > 0 else 246.0
-    return {'book_x1': int(bx1), 'book_x2': int(bx2), 'book_y1': int(by1), 'book_y2': int(by2), 'face_x1': int(face_x1), 'face_val': face_val}
+        if np.all(row[x:x+5] >= 240): {face_x1 := x}; break
+    return {'book_x1': int(bx1), 'book_x2': int(bx2), 'book_y1': int(by1), 'book_y2': int(by2), 'face_x1': int(face_x1)}
 
 def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None):
-    tmpl_rgb = np.array(tmpl_pil.convert('RGB')).astype(np.float64)
-    tmpl_gray = (0.299 * tmpl_rgb[:,:,0] + 0.587 * tmpl_rgb[:,:,1] + 0.114 * tmpl_rgb[:,:,2])
-    h, w = tmpl_gray.shape
+    tmpl_rgb = tmpl_pil.convert('RGB')
+    tmpl_array = np.array(tmpl_rgb).astype(np.float64)
+    h, w = tmpl_rgb.size[1], tmpl_rgb.size[0]
     
-    # SE NEL JSON (PRECISION)
-    if template_name in TEMPLATE_MAPS:
+    # 1. PRECISION MAPPING
+    if template_name in TEMPLATE_MAPS and template_name != "base_copertina_verticale.jpg":
         d = TEMPLATE_MAPS[template_name]
         px, py, pw, ph = d["coords"]
         bo = border_offset if border_offset is not None else d.get("offset", 1)
         x1, y1 = int((px * w) / 100) + bo, int((py * h) / 100) + bo
         tw, th = int((pw * w) / 100) - (bo * 2), int((ph * h) / 100) - (bo * 2)
         
-        # Smart Crop
-        t_asp = tw / th
-        i_w, i_h = cover_pil.size
-        i_asp = i_w / i_h
-        if i_asp > t_asp:
-            nw = int(i_h * t_asp)
-            crop = ((i_w - nw)//2, 0, (i_w - nw)//2 + nw, i_h)
+        target_aspect = tw / th
+        cw, ch = cover_pil.size
+        if cw/ch > target_aspect:
+            nw = int(ch * target_aspect)
+            crop = ((cw - nw)//2, 0, (cw - nw)//2 + nw, ch)
         else:
-            nh = int(i_w / t_asp)
-            crop = (0, (i_h - nh)//2, i_w, (i_h - nh)//2 + nh)
-            
-        c_res = np.array(cover_pil.crop(crop).resize((tw, th), Image.LANCZOS)).astype(np.float64)
-        sh = np.clip(np.array(tmpl_pil.convert('L'))[y1:y1+th, x1:x1+tw] / 255.0, 0, 1.0)
-        res = tmpl_rgb.copy()
-        for c in range(3): res[y1:y1+th, x1:x1+tw, c] = c_res[:, :, c] * sh
-        return Image.fromarray(np.clip(res, 0, 255).astype(np.uint8))
-
-    # LOGICA AUTOMATICA (BASE COPERTINA E ALTRI)
-    corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
-    bg_val = float(np.median(corners))
-    region = find_book_region(tmpl_gray, bg_val)
-    if region is None: return None
-    
-    if "base_copertina" in template_name.lower():
-        real_bx1, real_bx2 = 0, w-1
-        for x in range(w):
-            if np.any(tmpl_gray[:, x] < 250): {real_bx1 := x}; break
-        for x in range(w-1, -1, -1):
-            if np.any(tmpl_gray[:, x] < 250): {real_bx2 := x}; break
-        real_by1, real_by2 = 0, h-1
-        for y in range(h):
-            if np.any(tmpl_gray[y, :] < 250): {real_by1 := y}; break
-        for y in range(h-1, -1, -1):
-            if np.any(tmpl_gray[y, :] < 250): {real_by2 := y}; break
+            nh = int(cw / target_aspect)
+            crop = (0, (ch - nh)//2, cw, (ch - nh)//2 + nh)
         
-        real_w, real_h = real_bx2 - real_bx1 + 1, real_by2 - real_by1 + 1
-        bleed = 15
-        cover_big = np.array(cover_pil.resize((real_w + bleed*2, real_h + bleed*2), Image.LANCZOS)).astype(np.float64)
-        cover_final = cover_big[bleed:bleed+real_h, bleed:bleed+real_w]
-        res = tmpl_rgb.copy()
-        ratio = np.minimum(tmpl_gray[real_by1:real_by2+1, real_bx1:real_bx2+1] / 246.0, 1.0)
-        for c in range(3): res[real_by1:real_by2+1, real_bx1:real_bx2+1, c] = cover_final[:, :, c] * ratio
-        return Image.fromarray(np.clip(res, 0, 255).astype(np.uint8))
+        c_res = cover_pil.crop(crop).resize((tw, th), Image.LANCZOS)
+        
+        # Shadow/Multiply logic
+        tmpl_l = np.array(tmpl_pil.convert('L')).astype(np.float64)
+        shadows = np.clip(tmpl_l[y1:y1+th, x1:x1+tw] / 246.0, 0, 1.0)
+        
+        c_array = np.array(c_res.convert('RGB')).astype(np.float64)
+        for i in range(3): c_array[:,:,i] *= shadows
+        
+        # Alpha Handling (No black borders)
+        final_face = Image.fromarray(c_array.astype(np.uint8))
+        if c_res.mode == 'RGBA':
+            tmpl_rgb.paste(final_face, (x1, y1), c_res)
+        else:
+            tmpl_rgb.paste(final_face, (x1, y1))
+        return tmpl_rgb
 
-    # LOGICA NORMALE
-    bx1, bx2, by1, by2, face_val = region['book_x1'], region['book_x2'], region['book_y1'], region['book_y2'], region['face_val']
-    target_w, target_h = bx2 - bx1 + 1, by2 - by1 + 1
-    cover_res = np.array(cover_pil.resize((target_w, target_h), Image.LANCZOS)).astype(np.float64)
-    res = tmpl_rgb.copy()
-    book_ratio = np.minimum(tmpl_gray[by1:by2+1, bx1:bx2+1] / face_val, 1.0)
-    for c in range(3): res[by1:by2+1, bx1:bx2+1, c] = cover_res[:, :, c] * book_ratio
-    return Image.fromarray(np.clip(res, 0, 255).astype(np.uint8))
+    # 2. AUTO-DETECTION (Per base_copertina_verticale)
+    tmpl_gray = np.array(tmpl_pil.convert('L'))
+    region = find_book_region(tmpl_gray, np.median([tmpl_gray[0,0], tmpl_gray[0,-1]]))
+    if not region: return tmpl_rgb
+    
+    bx1, bx2, by1, by2 = region['book_x1'], region['book_x2'], region['book_y1'], region['book_y2']
+    if "base_copertina" in template_name.lower():
+        # Scansione bordi chirurgica per mockup senza dorso
+        for x in range(w): 
+            if np.any(tmpl_gray[:, x] < 250): {bx1 := x}; break
+        for x in range(w-1, -1, -1): 
+            if np.any(tmpl_gray[:, x] < 250): {bx2 := x}; break
+    
+    tw, th = bx2 - bx1 + 1, by2 - by1 + 1
+    c_res = cover_pil.resize((tw, th), Image.LANCZOS)
+    
+    # Render con Multiply
+    c_arr = np.array(c_res.convert('RGB')).astype(np.float64)
+    sh = np.clip(tmpl_gray[by1:by2+1, bx1:bx2+1] / 246.0, 0, 1.0)
+    for i in range(3): c_arr[:,:,i] *= sh
+    
+    final_face = Image.fromarray(c_arr.astype(np.uint8))
+    if c_res.mode == 'RGBA':
+        tmpl_rgb.paste(final_face, (bx1, by1), c_res)
+    else:
+        tmpl_rgb.paste(final_face, (bx1, by1))
+    return tmpl_rgb
 
-# --- CARICAMENTO LIBRERIA ---
+# --- LIBRERIA ---
 @st.cache_data
-def get_library(f_hash):
+def get_lib(h):
     lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}, "Altro": {}}
     if not os.path.exists("templates"): return lib
     for f in os.listdir("templates"):
         if f.lower().endswith(('.jpg', '.png', '.jpeg')):
-            cat = get_manual_cat(f)
-            lib[cat][f] = Image.open(os.path.join("templates", f)).convert('RGB')
+            lib[get_manual_cat(f)][f] = Image.open(os.path.join("templates", f)).convert('RGB')
     return lib
 
-libreria = get_library(get_folder_hash("templates"))
+libreria = get_lib(get_folder_hash("templates"))
 
 # --- INTERFACCIA ---
-menu = st.sidebar.radio("Menu", ["📚 Templates", "🎯 Calibrazione Coordinate", "⚡ Produzione"])
+menu = st.sidebar.radio("Menu", ["📚 Templates", "🎯 Calibrazione", "⚡ Produzione"])
 
 if menu == "📚 Templates":
     st.subheader("📚 Libreria Templates")
-    if st.button("🔄 RICARICA TEMPLATES"):
-        st.cache_data.clear()
-        st.rerun()
-    tabs = st.tabs(list(libreria.keys()))
-    for i, cat in enumerate(libreria.keys()):
-        with tabs[i]:
-            if not libreria[cat]: st.info("Vuoto")
-            else:
-                cols = st.columns(4)
-                for idx, (fn, img) in enumerate(libreria[cat].items()):
-                    cols[idx % 4].image(img, caption=fn, use_column_width=True)
+    if st.button("🔄 RICARICA"): st.cache_data.clear(); st.rerun()
+    ts = st.tabs(list(libreria.keys()))
+    for i, c in enumerate(libreria.keys()):
+        with ts[i]:
+            cols = st.columns(4)
+            for idx, (fn, img) in enumerate(libreria[c].items()):
+                cols[idx%4].image(img, caption=fn, use_column_width=True)
 
-elif menu == "🎯 Calibrazione Coordinate":
-    st.header("🎯 Calibrazione")
-    cat_choice = st.selectbox("Categoria:", list(libreria.keys()))
-    selected_t = st.selectbox("Template:", list(libreria[cat_choice].keys()))
-    if selected_t:
-        t_img = libreria[cat_choice][selected_t]
-        d = TEMPLATE_MAPS.get(selected_t, {"coords": (20.0, 10.0, 60.0, 80.0), "offset": 1})
-        if 'cal_px' not in st.session_state or st.session_state.get('last_t') != selected_t:
-            st.session_state.update({'cal_px': d["coords"][0], 'cal_py': d["coords"][1], 'cal_pw': d["coords"][2], 'cal_ph': d["coords"][3], 'cal_off': d["offset"], 'last_t': selected_t})
-        c1, c2 = st.columns(2)
-        st.session_state.cal_px = c1.number_input("X %", 0.0, 100.0, st.session_state.cal_px)
-        st.session_state.cal_pw = c1.number_input("Width %", 0.1, 100.0, st.session_state.cal_pw)
-        st.session_state.cal_py = c2.number_input("Y %", 0.0, 100.0, st.session_state.cal_py)
-        st.session_state.cal_ph = c2.number_input("Height %", 0.1, 100.0, st.session_state.cal_ph)
-        st.session_state.cal_off = st.slider("Offset", 0, 20, st.session_state.cal_off)
+elif menu == "🎯 Calibrazione":
+    cat = st.selectbox("Categoria:", list(libreria.keys()))
+    sel = st.selectbox("Template:", list(libreria[cat].keys()))
+    if sel:
+        t_img = libreria[cat][sel]
+        d = TEMPLATE_MAPS.get(sel, {"coords": (20, 10, 60, 80), "offset": 1})
+        if 'cal' not in st.session_state or st.session_state.get('cur') != sel:
+            st.session_state.cal = d; st.session_state.cur = sel
         
-        rect_img = t_img.copy()
-        draw = ImageDraw.Draw(rect_img)
-        w, h = rect_img.size
-        draw.rectangle([int(st.session_state.cal_px*w/100), int(st.session_state.cal_py*h/100), int((st.session_state.cal_px+st.session_state.cal_pw)*w/100), int((st.session_state.cal_py+st.session_state.cal_ph)*h/100)], outline="red", width=3)
-        st.image(rect_img, use_column_width=True)
+        col1, col2 = st.columns(2)
+        st.session_state.cal["coords"] = [
+            col1.number_input("X %", 0.0, 100.0, float(st.session_state.cal["coords"][0])),
+            col2.number_input("Y %", 0.0, 100.0, float(st.session_state.cal["coords"][1])),
+            col1.number_input("W %", 0.0, 100.0, float(st.session_state.cal["coords"][2])),
+            col2.number_input("H %", 0.0, 100.0, float(st.session_state.cal["coords"][3]))
+        ]
+        st.session_state.cal["offset"] = st.slider("Offset", 0, 20, int(st.session_state.cal["offset"]))
+        
+        # Anteprima rettangolo
+        p_img = t_img.copy(); draw = ImageDraw.Draw(p_img); w, h = p_img.size
+        c = st.session_state.cal["coords"]
+        draw.rectangle([int(c[0]*w/100), int(c[1]*h/100), int((c[0]+c[2])*w/100), int((c[1]+c[3])*h/100)], outline="red", width=5)
+        st.image(p_img, use_column_width=True)
         if st.button("💾 SALVA"):
-            TEMPLATE_MAPS[selected_t] = {"coords": (st.session_state.cal_px, st.session_state.cal_py, st.session_state.cal_pw, st.session_state.cal_ph), "offset": st.session_state.cal_off}
-            save_template_maps(TEMPLATE_MAPS)
-            st.success("Salvate!")
+            TEMPLATE_MAPS[sel] = st.session_state.cal; save_template_maps(TEMPLATE_MAPS); st.success("Salvate!")
 
 elif menu == "⚡ Produzione":
-    st.subheader("⚡ Produzione")
     scelta = st.radio("Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
+    up = st.file_uploader("Carica design (PNG supportate)", type=['jpg', 'png'], key='preview')
     
-    preview_design = st.file_uploader("Carica design per anteprima", type=['jpg', 'png'], key='prev')
-    if preview_design and libreria[scelta]:
-        # FIX FORMATO: Legge il formato REALE del file caricato
-        d_img = Image.open(preview_design)
-        real_format = d_img.format if d_img.format else 'PNG'
-        
-        st.write(f"🔍 Anteprime per categoria {scelta}:")
+    if up and libreria[scelta]:
+        d_img = Image.open(up)
         cols = st.columns(4)
         for i, (t_name, t_img) in enumerate(libreria[scelta].items()):
-            with cols[i % 4]:
+            with cols[i%4]:
                 res = composite_v3_fixed(t_img, d_img, t_name)
-                if res: st.image(res, caption=t_name, use_column_width=True)
+                st.image(res, caption=t_name, use_column_width=True)
 
     st.divider()
-    disegni = st.file_uploader("Batch Produzione", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
-    if st.button("🚀 GENERA TUTTI") and disegni and libreria[scelta]:
+    batch = st.file_uploader("Batch Produzione", accept_multiple_files=True)
+    if st.button("🚀 GENERA TUTTI") and batch and libreria[scelta]:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zf:
-            bar = st.progress(0)
-            total = len(disegni) * len(libreria[scelta])
+            progress = st.progress(0)
+            total = len(batch) * len(libreria[scelta])
             count = 0
-            for d_file in disegni:
-                # Legge il file e ne determina il formato reale
-                d_img_batch = Image.open(d_file)
-                # Rispetta l'estensione originale del file caricato
-                ext_orig = os.path.splitext(d_file.name)[1].lower()
-                if not ext_orig: ext_orig = ".png" # fallback
+            for b_file in batch:
+                b_img = Image.open(b_file)
+                # DETERMINA FORMATO REALE
+                is_png = b_img.mode == 'RGBA' or b_file.name.lower().endswith('.png')
+                fmt = 'PNG' if is_png else 'JPEG'
+                ext = '.png' if is_png else '.jpg'
                 
-                d_name = os.path.splitext(d_file.name)[0]
+                name_clean = os.path.splitext(b_file.name)[0]
+                if name_clean.lower().endswith('.png'): name_clean = name_clean[:-4] # Evita .png.png
+                
                 for t_name, t_img in libreria[scelta].items():
-                    res = composite_v3_fixed(t_img, d_img_batch, t_name)
-                    if res:
-                        buf = io.BytesIO()
-                        # Salva nel formato corretto
-                        save_fmt = 'PNG' if ext_orig == '.png' else 'JPEG'
-                        res.save(buf, format=save_fmt, quality=95 if save_fmt == 'JPEG' else None)
-                        zf.writestr(f"{d_name}/{t_name}{ext_orig}", buf.getvalue())
-                    count += 1
-                    bar.progress(count / total)
+                    res = composite_v3_fixed(t_img, b_img, t_name)
+                    buf = io.BytesIO()
+                    res.save(buf, format=fmt, quality=95 if fmt == 'JPEG' else None)
+                    zf.writestr(f"{name_clean}/{t_name.split('.')[0]}{ext}", buf.getvalue())
+                    count += 1; progress.progress(count/total)
         st.session_state.zip_ready, st.session_state.zip_data = True, zip_buf.getvalue()
-        st.success("Mockup pronti!")
+        st.success("Mockup generati con successo!")
+
     if st.session_state.get('zip_ready'):
         st.download_button("📥 SCARICA ZIP", st.session_state.zip_data, f"Mockups_{scelta}.zip", "application/zip")
