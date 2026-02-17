@@ -62,12 +62,17 @@ def find_book_region(tmpl_gray, bg_val):
     mid_y = (by1 + by2) // 2
     row = tmpl_gray[mid_y]
     face_x1 = bx1
+    
+    # FIX STREAMLIT MAGIC: Tolto il walrus operator e il set
     for x in range(bx1, bx2 - 5):
-        if np.all(row[x:x+5] >= 240): {face_x1 := x}; break
+        if np.all(row[x:x+5] >= 240):
+            face_x1 = x
+            break
+            
     return {'book_x1': int(bx1), 'book_x2': int(bx2), 'book_y1': int(by1), 'book_y2': int(by2), 'face_x1': int(face_x1)}
 
 def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None):
-    # SALVA LA TRASPARENZA ORIGINALE (Non perdoniamo più i neri)
+    # SALVA LA TRASPARENZA ORIGINALE
     has_alpha = False
     alpha_mask = None
     if tmpl_pil.mode in ('RGBA', 'LA') or (tmpl_pil.mode == 'P' and 'transparency' in tmpl_pil.info) or template_name.lower().endswith('.png'):
@@ -104,10 +109,11 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         for i in range(3): c_array[:,:,i] *= shadows
         
         final_face = Image.fromarray(c_array.astype(np.uint8))
-        if c_res.mode == 'RGBA': tmpl_rgb.paste(final_face, (x1, y1), c_res)
-        else: tmpl_rgb.paste(final_face, (x1, y1))
+        if c_res.mode == 'RGBA': 
+            tmpl_rgb.paste(final_face, (x1, y1), c_res)
+        else: 
+            tmpl_rgb.paste(final_face, (x1, y1))
         
-        # RIMETTI L'ALPHA ORIGINALE SE ERA UN PNG
         if has_alpha: tmpl_rgb.putalpha(alpha_mask)
         return tmpl_rgb
 
@@ -123,16 +129,27 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     else:
         bx1, bx2, by1, by2 = region['book_x1'], region['book_x2'], region['book_y1'], region['book_y2']
     
+    # FIX STREAMLIT MAGIC: Sostituita sintassi errata con sintassi standard
     if "base_copertina" in template_name.lower():
         bx1, bx2, by1, by2 = 0, w-1, 0, h-1
+        
         for x in range(w): 
-            if np.any(tmpl_gray[:, x] < 250): {bx1 := x}; break
+            if np.any(tmpl_gray[:, x] < 250):
+                bx1 = x
+                break
         for x in range(w-1, -1, -1): 
-            if np.any(tmpl_gray[:, x] < 250): {bx2 := x}; break
+            if np.any(tmpl_gray[:, x] < 250):
+                bx2 = x
+                break
         for y in range(h):
-            if np.any(tmpl_gray[y, :] < 250): {by1 := y}; break
+            if np.any(tmpl_gray[y, :] < 250):
+                by1 = y
+                break
         for y in range(h-1, -1, -1):
-            if np.any(tmpl_gray[y, :] < 250): {by2 := y}; break
+            if np.any(tmpl_gray[y, :] < 250):
+                by2 = y
+                break
+                
         bx1, bx2 = max(0, bx1 - 2), min(w - 1, bx2 + 2)
         by1, by2 = max(0, by1 - 2), min(h - 1, by2 + 2)
         
@@ -143,10 +160,11 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     for i in range(3): c_arr[:,:,i] *= sh
     
     final_face = Image.fromarray(c_arr.astype(np.uint8))
-    if c_res.mode == 'RGBA': tmpl_rgb.paste(final_face, (bx1, by1), c_res)
-    else: tmpl_rgb.paste(final_face, (bx1, by1))
+    if c_res.mode == 'RGBA': 
+        tmpl_rgb.paste(final_face, (bx1, by1), c_res)
+    else: 
+        tmpl_rgb.paste(final_face, (bx1, by1))
     
-    # RIMETTI L'ALPHA ORIGINALE SE ERA UN PNG
     if has_alpha: tmpl_rgb.putalpha(alpha_mask)
     return tmpl_rgb
 
@@ -229,7 +247,6 @@ elif menu == "⚡ Produzione":
                 for t_name, t_img in libreria[scelta].items():
                     res = composite_v3_fixed(t_img, b_img, t_name)
                     
-                    # FIX: ORA IL FORMATO DIPENDE DAL TEMPLATE, NON DALLA GRAFICA
                     is_tmpl_png = t_name.lower().endswith('.png') or res.mode == 'RGBA'
                     save_fmt = 'PNG' if is_tmpl_png else 'JPEG'
                     save_ext = '.png' if is_tmpl_png else '.jpg'
