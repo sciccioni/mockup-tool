@@ -12,12 +12,12 @@ st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FIXED", layout="
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- ANTI-CACHE ---
+# --- ANTI-CACHE (Rileva modifiche ai file con lo stesso nome) ---
 def get_folder_hash(folder_path):
     if not os.path.exists(folder_path): return 0
     return sum(os.path.getmtime(os.path.join(folder_path, f)) for f in os.listdir(folder_path))
 
-# --- COORDINATE ---
+# --- GESTIONE COORDINATE ---
 TEMPLATE_MAPS_FILE = "template_coordinates.json"
 
 def load_template_maps():
@@ -28,8 +28,7 @@ def load_template_maps():
         "base_quadrata_temi_app.jpg": {"coords": (27.7, 10.5, 44.7, 79.4), "offset": 1},
         "base_bottom_app.jpg": {"coords": (21.8, 4.7, 57.0, 91.7), "offset": 1},
         "15x22-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
-        "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
-        "base_copertina_verticale.jpg": {"coords": (0, 0, 100, 100), "offset": 0} # Placeholder per auto-detection
+        "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1}
     }
     if os.path.exists(TEMPLATE_MAPS_FILE):
         try:
@@ -42,7 +41,7 @@ def save_template_maps(maps):
 
 TEMPLATE_MAPS = load_template_maps()
 
-# --- CATEGORIE ---
+# --- CATEGORIZZAZIONE ---
 def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["vertical", "15x22", "20x30", "bottom", "copertina_verticale"]): return "Verticali"
@@ -50,7 +49,7 @@ def get_manual_cat(filename):
     if any(x in fn for x in ["quadrat", "20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
-# --- CORE LOGIC ---
+# --- LOGICA DI COMPOSIZIONE (FIX TRASPARENZA) ---
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 3)
@@ -67,11 +66,10 @@ def find_book_region(tmpl_gray, bg_val):
 
 def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None):
     tmpl_rgb = tmpl_pil.convert('RGB')
-    tmpl_array = np.array(tmpl_rgb).astype(np.float64)
     h, w = tmpl_rgb.size[1], tmpl_rgb.size[0]
     
     # 1. PRECISION MAPPING
-    if template_name in TEMPLATE_MAPS and template_name != "base_copertina_verticale.jpg":
+    if template_name in TEMPLATE_MAPS:
         d = TEMPLATE_MAPS[template_name]
         px, py, pw, ph = d["coords"]
         bo = border_offset if border_offset is not None else d.get("offset", 1)
@@ -89,38 +87,35 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         
         c_res = cover_pil.crop(crop).resize((tw, th), Image.LANCZOS)
         
-        # Shadow/Multiply logic
+        # Multiply logic per ombre
         tmpl_l = np.array(tmpl_pil.convert('L')).astype(np.float64)
         shadows = np.clip(tmpl_l[y1:y1+th, x1:x1+tw] / 246.0, 0, 1.0)
         
         c_array = np.array(c_res.convert('RGB')).astype(np.float64)
         for i in range(3): c_array[:,:,i] *= shadows
         
-        # Alpha Handling (No black borders)
         final_face = Image.fromarray(c_array.astype(np.uint8))
+        # Se l'immagine caricata ha trasparenza, usala come maschera per evitare bordi neri
         if c_res.mode == 'RGBA':
             tmpl_rgb.paste(final_face, (x1, y1), c_res)
         else:
             tmpl_rgb.paste(final_face, (x1, y1))
         return tmpl_rgb
 
-    # 2. AUTO-DETECTION (Per base_copertina_verticale)
+    # 2. AUTO-DETECTION (Base Copertina)
     tmpl_gray = np.array(tmpl_pil.convert('L'))
-    region = find_book_region(tmpl_gray, np.median([tmpl_gray[0,0], tmpl_gray[0,-1]]))
-    if not region: return tmpl_rgb
-    
-    bx1, bx2, by1, by2 = region['book_x1'], region['book_x2'], region['book_y1'], region['book_y2']
-    if "base_copertina" in template_name.lower():
-        # Scansione bordi chirurgica per mockup senza dorso
-        for x in range(w): 
-            if np.any(tmpl_gray[:, x] < 250): {bx1 := x}; break
-        for x in range(w-1, -1, -1): 
-            if np.any(tmpl_gray[:, x] < 250): {bx2 := x}; break
-    
+    bx1, bx2, by1, by2 = 0, w-1, 0, h-1
+    for x in range(w): 
+        if np.any(tmpl_gray[:, x] < 250): {bx1 := x}; break
+    for x in range(w-1, -1, -1): 
+        if np.any(tmpl_gray[:, x] < 250): {bx2 := x}; break
+    for y in range(h):
+        if np.any(tmpl_gray[y, :] < 250): {by1 := y}; break
+    for y in range(h-1, -1, -1):
+        if np.any(tmpl_gray[y, :] < 250): {by2 := y}; break
+        
     tw, th = bx2 - bx1 + 1, by2 - by1 + 1
     c_res = cover_pil.resize((tw, th), Image.LANCZOS)
-    
-    # Render con Multiply
     c_arr = np.array(c_res.convert('RGB')).astype(np.float64)
     sh = np.clip(tmpl_gray[by1:by2+1, bx1:bx2+1] / 246.0, 0, 1.0)
     for i in range(3): c_arr[:,:,i] *= sh
@@ -166,18 +161,15 @@ elif menu == "🎯 Calibrazione":
         if 'cal' not in st.session_state or st.session_state.get('cur') != sel:
             st.session_state.cal = d; st.session_state.cur = sel
         
+        c = st.session_state.cal["coords"]
         col1, col2 = st.columns(2)
-        st.session_state.cal["coords"] = [
-            col1.number_input("X %", 0.0, 100.0, float(st.session_state.cal["coords"][0])),
-            col2.number_input("Y %", 0.0, 100.0, float(st.session_state.cal["coords"][1])),
-            col1.number_input("W %", 0.0, 100.0, float(st.session_state.cal["coords"][2])),
-            col2.number_input("H %", 0.0, 100.0, float(st.session_state.cal["coords"][3]))
-        ]
+        c[0] = col1.number_input("X %", 0.0, 100.0, float(c[0]))
+        c[1] = col2.number_input("Y %", 0.0, 100.0, float(c[1]))
+        c[2] = col1.number_input("W %", 0.0, 100.0, float(c[2]))
+        c[3] = col2.number_input("H %", 0.0, 100.0, float(c[3]))
         st.session_state.cal["offset"] = st.slider("Offset", 0, 20, int(st.session_state.cal["offset"]))
         
-        # Anteprima rettangolo
         p_img = t_img.copy(); draw = ImageDraw.Draw(p_img); w, h = p_img.size
-        c = st.session_state.cal["coords"]
         draw.rectangle([int(c[0]*w/100), int(c[1]*h/100), int((c[0]+c[2])*w/100), int((c[1]+c[3])*h/100)], outline="red", width=5)
         st.image(p_img, use_column_width=True)
         if st.button("💾 SALVA"):
@@ -185,7 +177,7 @@ elif menu == "🎯 Calibrazione":
 
 elif menu == "⚡ Produzione":
     scelta = st.radio("Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
-    up = st.file_uploader("Carica design (PNG supportate)", type=['jpg', 'png'], key='preview')
+    up = st.file_uploader("Carica design", type=['jpg', 'png'], key='preview')
     
     if up and libreria[scelta]:
         d_img = Image.open(up)
@@ -205,22 +197,23 @@ elif menu == "⚡ Produzione":
             count = 0
             for b_file in batch:
                 b_img = Image.open(b_file)
-                # DETERMINA FORMATO REALE
+                # Capisce se è una PNG o JPG reale
                 is_png = b_img.mode == 'RGBA' or b_file.name.lower().endswith('.png')
                 fmt = 'PNG' if is_png else 'JPEG'
                 ext = '.png' if is_png else '.jpg'
                 
-                name_clean = os.path.splitext(b_file.name)[0]
-                if name_clean.lower().endswith('.png'): name_clean = name_clean[:-4] # Evita .png.png
+                # PULISCE IL NOME PER EVITARE .png.jpg
+                base_name = os.path.splitext(b_file.name)[0]
+                if base_name.lower().endswith('.png'): base_name = base_name[:-4]
                 
                 for t_name, t_img in libreria[scelta].items():
                     res = composite_v3_fixed(t_img, b_img, t_name)
                     buf = io.BytesIO()
                     res.save(buf, format=fmt, quality=95 if fmt == 'JPEG' else None)
-                    zf.writestr(f"{name_clean}/{t_name.split('.')[0]}{ext}", buf.getvalue())
+                    zf.writestr(f"{base_name}/{t_name.split('.')[0]}{ext}", buf.getvalue())
                     count += 1; progress.progress(count/total)
         st.session_state.zip_ready, st.session_state.zip_data = True, zip_buf.getvalue()
-        st.success("Mockup generati con successo!")
+        st.success("Tutto pronto!")
 
     if st.session_state.get('zip_ready'):
         st.download_button("📥 SCARICA ZIP", st.session_state.zip_data, f"Mockups_{scelta}.zip", "application/zip")
