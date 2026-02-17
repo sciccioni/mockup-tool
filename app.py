@@ -53,7 +53,10 @@ def get_manual_cat(filename):
     if any(x in fn for x in ["quadrat", "20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
-# --- LOGICA CORE RIPRISTINATA ---
+# ===================================================================
+# LOGICA CORE TOTALE (NON MANCA NULLA)
+# ===================================================================
+
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 3)
@@ -78,6 +81,7 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     tmpl_gray = (0.299 * tmpl_rgb[:,:,0] + 0.587 * tmpl_rgb[:,:,1] + 0.114 * tmpl_rgb[:,:,2])
     h, w = tmpl_gray.shape
     
+    # SE NEL JSON (PRECISION)
     if template_name in TEMPLATE_MAPS:
         d = TEMPLATE_MAPS[template_name]
         px, py, pw, ph = d["coords"]
@@ -102,12 +106,16 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         for c in range(3): res[y1:y1+th, x1:x1+tw, c] = c_res[:, :, c] * sh
         return Image.fromarray(np.clip(res, 0, 255).astype(np.uint8))
 
-    # Logica base_copertina automatica
+    # LOGICA AUTOMATICA (BASE COPERTINA E ALTRI)
+    corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
+    bg_val = float(np.median(corners))
+    region = find_book_region(tmpl_gray, bg_val)
+    if region is None: return None
+    
     if "base_copertina" in template_name.lower():
-        real_bx1 = 0
+        real_bx1, real_bx2 = 0, w-1
         for x in range(w):
             if np.any(tmpl_gray[:, x] < 250): {real_bx1 := x}; break
-        real_bx2 = w - 1
         for x in range(w-1, -1, -1):
             if np.any(tmpl_gray[:, x] < 250): {real_bx2 := x}; break
         real_by1, real_by2 = 0, h-1
@@ -124,14 +132,15 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         ratio = np.minimum(tmpl_gray[real_by1:real_by2+1, real_bx1:real_bx2+1] / 246.0, 1.0)
         for c in range(3): res[real_by1:real_by2+1, real_bx1:real_bx2+1, c] = cover_final[:, :, c] * ratio
         return Image.fromarray(np.clip(res, 0, 255).astype(np.uint8))
-    return None
 
-def draw_rectangle_on_template(template_img, px, py, pw, ph):
-    img = template_img.copy()
-    draw = ImageDraw.Draw(img)
-    w, h = img.size
-    draw.rectangle([int(px*w/100), int(py*h/100), int((px+pw)*w/100), int((py+ph)*h/100)], outline="red", width=3)
-    return img
+    # LOGICA NORMALE
+    bx1, bx2, by1, by2, face_val = region['book_x1'], region['book_x2'], region['book_y1'], region['book_y2'], region['face_val']
+    target_w, target_h = bx2 - bx1 + 1, by2 - by1 + 1
+    cover_res = np.array(cover_pil.resize((target_w, target_h), Image.LANCZOS)).astype(np.float64)
+    res = tmpl_rgb.copy()
+    book_ratio = np.minimum(tmpl_gray[by1:by2+1, bx1:bx2+1] / face_val, 1.0)
+    for c in range(3): res[by1:by2+1, bx1:bx2+1, c] = cover_res[:, :, c] * book_ratio
+    return Image.fromarray(np.clip(res, 0, 255).astype(np.uint8))
 
 # --- CARICAMENTO LIBRERIA ---
 @st.cache_data
@@ -164,7 +173,7 @@ if menu == "📚 Templates":
                     cols[idx % 4].image(img, caption=fn, use_column_width=True)
 
 elif menu == "🎯 Calibrazione Coordinate":
-    st.header("🎯 Calibrazione Coordinate")
+    st.header("🎯 Calibrazione")
     cat_choice = st.selectbox("Categoria:", list(libreria.keys()))
     selected_t = st.selectbox("Template:", list(libreria[cat_choice].keys()))
     if selected_t:
@@ -172,14 +181,18 @@ elif menu == "🎯 Calibrazione Coordinate":
         d = TEMPLATE_MAPS.get(selected_t, {"coords": (20.0, 10.0, 60.0, 80.0), "offset": 1})
         if 'cal_px' not in st.session_state or st.session_state.get('last_t') != selected_t:
             st.session_state.update({'cal_px': d["coords"][0], 'cal_py': d["coords"][1], 'cal_pw': d["coords"][2], 'cal_ph': d["coords"][3], 'cal_off': d["offset"], 'last_t': selected_t})
-        
         c1, c2 = st.columns(2)
         st.session_state.cal_px = c1.number_input("X %", 0.0, 100.0, st.session_state.cal_px)
         st.session_state.cal_pw = c1.number_input("Width %", 0.1, 100.0, st.session_state.cal_pw)
         st.session_state.cal_py = c2.number_input("Y %", 0.0, 100.0, st.session_state.cal_py)
         st.session_state.cal_ph = c2.number_input("Height %", 0.1, 100.0, st.session_state.cal_ph)
         st.session_state.cal_off = st.slider("Offset", 0, 20, st.session_state.cal_off)
-        st.image(draw_rectangle_on_template(t_img, st.session_state.cal_px, st.session_state.cal_py, st.session_state.cal_pw, st.session_state.cal_ph), use_column_width=True)
+        
+        rect_img = t_img.copy()
+        draw = ImageDraw.Draw(rect_img)
+        w, h = rect_img.size
+        draw.rectangle([int(st.session_state.cal_px*w/100), int(st.session_state.cal_py*h/100), int((st.session_state.cal_px+st.session_state.cal_pw)*w/100), int((st.session_state.cal_py+st.session_state.cal_ph)*h/100)], outline="red", width=3)
+        st.image(rect_img, use_column_width=True)
         if st.button("💾 SALVA"):
             TEMPLATE_MAPS[selected_t] = {"coords": (st.session_state.cal_px, st.session_state.cal_py, st.session_state.cal_pw, st.session_state.cal_ph), "offset": st.session_state.cal_off}
             save_template_maps(TEMPLATE_MAPS)
@@ -191,7 +204,11 @@ elif menu == "⚡ Produzione":
     
     preview_design = st.file_uploader("Carica design per anteprima", type=['jpg', 'png'], key='prev')
     if preview_design and libreria[scelta]:
+        # FIX FORMATO: Legge il formato REALE del file caricato
         d_img = Image.open(preview_design)
+        real_format = d_img.format if d_img.format else 'PNG'
+        
+        st.write(f"🔍 Anteprime per categoria {scelta}:")
         cols = st.columns(4)
         for i, (t_name, t_img) in enumerate(libreria[scelta].items()):
             with cols[i % 4]:
@@ -199,7 +216,7 @@ elif menu == "⚡ Produzione":
                 if res: st.image(res, caption=t_name, use_column_width=True)
 
     st.divider()
-    disegni = st.file_uploader("Batch", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
+    disegni = st.file_uploader("Batch Produzione", accept_multiple_files=True, key=f"up_{st.session_state.uploader_key}")
     if st.button("🚀 GENERA TUTTI") and disegni and libreria[scelta]:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zf:
@@ -207,21 +224,24 @@ elif menu == "⚡ Produzione":
             total = len(disegni) * len(libreria[scelta])
             count = 0
             for d_file in disegni:
-                d_img = Image.open(d_file)
-                d_ext = os.path.splitext(d_file.name)[1].lower().replace('.', '')
-                if d_ext == 'png': fmt, mime = 'PNG', 'image/png'
-                else: fmt, mime = 'JPEG', 'image/jpeg'
+                # Legge il file e ne determina il formato reale
+                d_img_batch = Image.open(d_file)
+                # Rispetta l'estensione originale del file caricato
+                ext_orig = os.path.splitext(d_file.name)[1].lower()
+                if not ext_orig: ext_orig = ".png" # fallback
                 
                 d_name = os.path.splitext(d_file.name)[0]
                 for t_name, t_img in libreria[scelta].items():
-                    res = composite_v3_fixed(t_img, d_img, t_name)
+                    res = composite_v3_fixed(t_img, d_img_batch, t_name)
                     if res:
                         buf = io.BytesIO()
-                        res.save(buf, format=fmt, quality=95 if fmt == 'JPEG' else None)
-                        zf.writestr(f"{d_name}/{t_name}.{d_ext.replace('jpeg', 'jpg')}", buf.getvalue())
+                        # Salva nel formato corretto
+                        save_fmt = 'PNG' if ext_orig == '.png' else 'JPEG'
+                        res.save(buf, format=save_fmt, quality=95 if save_fmt == 'JPEG' else None)
+                        zf.writestr(f"{d_name}/{t_name}{ext_orig}", buf.getvalue())
                     count += 1
                     bar.progress(count / total)
         st.session_state.zip_ready, st.session_state.zip_data = True, zip_buf.getvalue()
-        st.success("Pronto!")
+        st.success("Mockup pronti!")
     if st.session_state.get('zip_ready'):
         st.download_button("📥 SCARICA ZIP", st.session_state.zip_data, f"Mockups_{scelta}.zip", "application/zip")
