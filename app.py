@@ -12,12 +12,12 @@ st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FIXED", layout="
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- ANTI-CACHE (Rileva modifiche ai file con lo stesso nome) ---
+# --- ANTI-CACHE ---
 def get_folder_hash(folder_path):
     if not os.path.exists(folder_path): return 0
     return sum(os.path.getmtime(os.path.join(folder_path, f)) for f in os.listdir(folder_path))
 
-# --- GESTIONE COORDINATE ---
+# --- COORDINATE ---
 TEMPLATE_MAPS_FILE = "template_coordinates.json"
 
 def load_template_maps():
@@ -28,6 +28,8 @@ def load_template_maps():
         "base_quadrata_temi_app.jpg": {"coords": (27.7, 10.5, 44.7, 79.4), "offset": 1},
         "base_bottom_app.jpg": {"coords": (21.8, 4.7, 57.0, 91.7), "offset": 1},
         "15x22-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
+        "20x30-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
+        "Fotolibro-Temi-Verticali-temi-2.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
         "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1}
     }
     if os.path.exists(TEMPLATE_MAPS_FILE):
@@ -41,7 +43,7 @@ def save_template_maps(maps):
 
 TEMPLATE_MAPS = load_template_maps()
 
-# --- CATEGORIZZAZIONE ---
+# --- CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["vertical", "15x22", "20x30", "bottom", "copertina_verticale"]): return "Verticali"
@@ -49,7 +51,7 @@ def get_manual_cat(filename):
     if any(x in fn for x in ["quadrat", "20x20", "30x30"]): return "Quadrati"
     return "Altro"
 
-# --- LOGICA DI COMPOSIZIONE (FIX TRASPARENZA) ---
+# --- CORE LOGIC ---
 def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 3)
@@ -65,6 +67,14 @@ def find_book_region(tmpl_gray, bg_val):
     return {'book_x1': int(bx1), 'book_x2': int(bx2), 'book_y1': int(by1), 'book_y2': int(by2), 'face_x1': int(face_x1)}
 
 def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None):
+    # SALVA LA TRASPARENZA ORIGINALE (Non perdoniamo più i neri)
+    has_alpha = False
+    alpha_mask = None
+    if tmpl_pil.mode in ('RGBA', 'LA') or (tmpl_pil.mode == 'P' and 'transparency' in tmpl_pil.info) or template_name.lower().endswith('.png'):
+        has_alpha = True
+        tmpl_pil = tmpl_pil.convert('RGBA')
+        alpha_mask = tmpl_pil.split()[3]
+
     tmpl_rgb = tmpl_pil.convert('RGB')
     h, w = tmpl_rgb.size[1], tmpl_rgb.size[0]
     
@@ -87,32 +97,44 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         
         c_res = cover_pil.crop(crop).resize((tw, th), Image.LANCZOS)
         
-        # Multiply logic per ombre
-        tmpl_l = np.array(tmpl_pil.convert('L')).astype(np.float64)
+        tmpl_l = np.array(tmpl_rgb.convert('L')).astype(np.float64)
         shadows = np.clip(tmpl_l[y1:y1+th, x1:x1+tw] / 246.0, 0, 1.0)
         
         c_array = np.array(c_res.convert('RGB')).astype(np.float64)
         for i in range(3): c_array[:,:,i] *= shadows
         
         final_face = Image.fromarray(c_array.astype(np.uint8))
-        # Se l'immagine caricata ha trasparenza, usala come maschera per evitare bordi neri
-        if c_res.mode == 'RGBA':
-            tmpl_rgb.paste(final_face, (x1, y1), c_res)
-        else:
-            tmpl_rgb.paste(final_face, (x1, y1))
+        if c_res.mode == 'RGBA': tmpl_rgb.paste(final_face, (x1, y1), c_res)
+        else: tmpl_rgb.paste(final_face, (x1, y1))
+        
+        # RIMETTI L'ALPHA ORIGINALE SE ERA UN PNG
+        if has_alpha: tmpl_rgb.putalpha(alpha_mask)
         return tmpl_rgb
 
-    # 2. AUTO-DETECTION (Base Copertina)
-    tmpl_gray = np.array(tmpl_pil.convert('L'))
-    bx1, bx2, by1, by2 = 0, w-1, 0, h-1
-    for x in range(w): 
-        if np.any(tmpl_gray[:, x] < 250): {bx1 := x}; break
-    for x in range(w-1, -1, -1): 
-        if np.any(tmpl_gray[:, x] < 250): {bx2 := x}; break
-    for y in range(h):
-        if np.any(tmpl_gray[y, :] < 250): {by1 := y}; break
-    for y in range(h-1, -1, -1):
-        if np.any(tmpl_gray[y, :] < 250): {by2 := y}; break
+    # 2. AUTO-DETECTION
+    tmpl_gray = np.array(tmpl_rgb.convert('L'))
+    corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
+    bg_val = float(np.median(corners))
+    region = find_book_region(tmpl_gray, bg_val)
+    
+    if region is None or (region['book_x2'] - region['book_x1'] > w * 0.95):
+        margin_x, margin_y = int(w * 0.2), int(h * 0.1)
+        bx1, bx2, by1, by2 = margin_x, w - margin_x, margin_y, h - margin_y
+    else:
+        bx1, bx2, by1, by2 = region['book_x1'], region['book_x2'], region['book_y1'], region['book_y2']
+    
+    if "base_copertina" in template_name.lower():
+        bx1, bx2, by1, by2 = 0, w-1, 0, h-1
+        for x in range(w): 
+            if np.any(tmpl_gray[:, x] < 250): {bx1 := x}; break
+        for x in range(w-1, -1, -1): 
+            if np.any(tmpl_gray[:, x] < 250): {bx2 := x}; break
+        for y in range(h):
+            if np.any(tmpl_gray[y, :] < 250): {by1 := y}; break
+        for y in range(h-1, -1, -1):
+            if np.any(tmpl_gray[y, :] < 250): {by2 := y}; break
+        bx1, bx2 = max(0, bx1 - 2), min(w - 1, bx2 + 2)
+        by1, by2 = max(0, by1 - 2), min(h - 1, by2 + 2)
         
     tw, th = bx2 - bx1 + 1, by2 - by1 + 1
     c_res = cover_pil.resize((tw, th), Image.LANCZOS)
@@ -121,20 +143,21 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     for i in range(3): c_arr[:,:,i] *= sh
     
     final_face = Image.fromarray(c_arr.astype(np.uint8))
-    if c_res.mode == 'RGBA':
-        tmpl_rgb.paste(final_face, (bx1, by1), c_res)
-    else:
-        tmpl_rgb.paste(final_face, (bx1, by1))
+    if c_res.mode == 'RGBA': tmpl_rgb.paste(final_face, (bx1, by1), c_res)
+    else: tmpl_rgb.paste(final_face, (bx1, by1))
+    
+    # RIMETTI L'ALPHA ORIGINALE SE ERA UN PNG
+    if has_alpha: tmpl_rgb.putalpha(alpha_mask)
     return tmpl_rgb
 
 # --- LIBRERIA ---
 @st.cache_data
-def get_lib(h):
+def get_lib(h_val):
     lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}, "Altro": {}}
     if not os.path.exists("templates"): return lib
     for f in os.listdir("templates"):
         if f.lower().endswith(('.jpg', '.png', '.jpeg')):
-            lib[get_manual_cat(f)][f] = Image.open(os.path.join("templates", f)).convert('RGB')
+            lib[get_manual_cat(f)][f] = Image.open(os.path.join("templates", f))
     return lib
 
 libreria = get_lib(get_folder_hash("templates"))
@@ -169,7 +192,8 @@ elif menu == "🎯 Calibrazione":
         c[3] = col2.number_input("H %", 0.0, 100.0, float(c[3]))
         st.session_state.cal["offset"] = st.slider("Offset", 0, 20, int(st.session_state.cal["offset"]))
         
-        p_img = t_img.copy(); draw = ImageDraw.Draw(p_img); w, h = p_img.size
+        p_img = t_img.copy().convert('RGB')
+        draw = ImageDraw.Draw(p_img); w, h = p_img.size
         draw.rectangle([int(c[0]*w/100), int(c[1]*h/100), int((c[0]+c[2])*w/100), int((c[1]+c[3])*h/100)], outline="red", width=5)
         st.image(p_img, use_column_width=True)
         if st.button("💾 SALVA"):
@@ -197,20 +221,29 @@ elif menu == "⚡ Produzione":
             count = 0
             for b_file in batch:
                 b_img = Image.open(b_file)
-                # Capisce se è una PNG o JPG reale
-                is_png = b_img.mode == 'RGBA' or b_file.name.lower().endswith('.png')
-                fmt = 'PNG' if is_png else 'JPEG'
-                ext = '.png' if is_png else '.jpg'
                 
-                # PULISCE IL NOME PER EVITARE .png.jpg
+                # NOME CARTELLA PULITO
                 base_name = os.path.splitext(b_file.name)[0]
                 if base_name.lower().endswith('.png'): base_name = base_name[:-4]
                 
                 for t_name, t_img in libreria[scelta].items():
                     res = composite_v3_fixed(t_img, b_img, t_name)
+                    
+                    # FIX: ORA IL FORMATO DIPENDE DAL TEMPLATE, NON DALLA GRAFICA
+                    is_tmpl_png = t_name.lower().endswith('.png') or res.mode == 'RGBA'
+                    save_fmt = 'PNG' if is_tmpl_png else 'JPEG'
+                    save_ext = '.png' if is_tmpl_png else '.jpg'
+                    
                     buf = io.BytesIO()
-                    res.save(buf, format=fmt, quality=95 if fmt == 'JPEG' else None)
-                    zf.writestr(f"{base_name}/{t_name.split('.')[0]}{ext}", buf.getvalue())
+                    if save_fmt == 'PNG':
+                        res.save(buf, format='PNG')
+                    else:
+                        res.save(buf, format='JPEG', quality=95)
+                    
+                    t_clean = os.path.splitext(t_name)[0]
+                    if t_clean.lower().endswith('.png'): t_clean = t_clean[:-4]
+                    
+                    zf.writestr(f"{base_name}/{t_clean}{save_ext}", buf.getvalue())
                     count += 1; progress.progress(count/total)
         st.session_state.zip_ready, st.session_state.zip_data = True, zip_buf.getvalue()
         st.success("Tutto pronto!")
