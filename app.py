@@ -14,7 +14,8 @@ if 'uploader_key' not in st.session_state:
 
 # --- ANTI-CACHE ---
 def get_folder_hash(folder_path):
-    if not os.path.exists(folder_path): return 0
+    if not os.path.exists(folder_path):
+        return 0
     return sum(os.path.getmtime(os.path.join(folder_path, f)) for f in os.listdir(folder_path))
 
 # --- COORDINATE ---
@@ -34,21 +35,27 @@ def load_template_maps():
     }
     if os.path.exists(TEMPLATE_MAPS_FILE):
         try:
-            with open(TEMPLATE_MAPS_FILE, 'r') as f: return json.load(f)
-        except: return default_maps
+            with open(TEMPLATE_MAPS_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return default_maps
     return default_maps
 
 def save_template_maps(maps):
-    with open(TEMPLATE_MAPS_FILE, 'w') as f: json.dump(maps, f, indent=2)
+    with open(TEMPLATE_MAPS_FILE, 'w') as f:
+        json.dump(maps, f, indent=2)
 
 TEMPLATE_MAPS = load_template_maps()
 
 # --- CATEGORIE ---
 def get_manual_cat(filename):
     fn = filename.lower()
-    if any(x in fn for x in ["vertical", "15x22", "20x30", "bottom", "copertina_verticale"]): return "Verticali"
-    if any(x in fn for x in ["orizzontal", "20x15", "27x20", "32x24", "40x30"]): return "Orizzontali"
-    if any(x in fn for x in ["quadrat", "20x20", "30x30"]): return "Quadrati"
+    if any(x in fn for x in ["vertical", "15x22", "20x30", "bottom", "copertina_verticale"]):
+        return "Verticali"
+    if any(x in fn for x in ["orizzontal", "20x15", "27x20", "32x24", "40x30"]):
+        return "Orizzontali"
+    if any(x in fn for x in ["quadrat", "20x20", "30x30"]):
+        return "Quadrati"
     return "Altro"
 
 # --- CORE LOGIC ---
@@ -56,33 +63,37 @@ def find_book_region(tmpl_gray, bg_val):
     h, w = tmpl_gray.shape
     book_mask = tmpl_gray > (bg_val + 3)
     rows, cols = np.any(book_mask, axis=1), np.any(book_mask, axis=0)
-    if not rows.any() or not cols.any(): return None
+    if not rows.any() or not cols.any():
+        return None
     by1, by2 = np.where(rows)[0][[0, -1]]
     bx1, bx2 = np.where(cols)[0][[0, -1]]
     mid_y = (by1 + by2) // 2
     row = tmpl_gray[mid_y]
     face_x1 = bx1
-    
-    # FIX STREAMLIT MAGIC: Tolto il walrus operator e il set
     for x in range(bx1, bx2 - 5):
         if np.all(row[x:x+5] >= 240):
             face_x1 = x
             break
-            
-    return {'book_x1': int(bx1), 'book_x2': int(bx2), 'book_y1': int(by1), 'book_y2': int(by2), 'face_x1': int(face_x1)}
+    return {
+        'book_x1': int(bx1), 'book_x2': int(bx2),
+        'book_y1': int(by1), 'book_y2': int(by2),
+        'face_x1': int(face_x1)
+    }
 
 def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None):
     # SALVA LA TRASPARENZA ORIGINALE
     has_alpha = False
     alpha_mask = None
-    if tmpl_pil.mode in ('RGBA', 'LA') or (tmpl_pil.mode == 'P' and 'transparency' in tmpl_pil.info) or template_name.lower().endswith('.png'):
+    if (tmpl_pil.mode in ('RGBA', 'LA') or
+            (tmpl_pil.mode == 'P' and 'transparency' in tmpl_pil.info) or
+            template_name.lower().endswith('.png')):
         has_alpha = True
         tmpl_pil = tmpl_pil.convert('RGBA')
         alpha_mask = tmpl_pil.split()[3]
 
     tmpl_rgb = tmpl_pil.convert('RGB')
     h, w = tmpl_rgb.size[1], tmpl_rgb.size[0]
-    
+
     # 1. PRECISION MAPPING
     if template_name in TEMPLATE_MAPS:
         d = TEMPLATE_MAPS[template_name]
@@ -90,7 +101,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         bo = border_offset if border_offset is not None else d.get("offset", 1)
         x1, y1 = int((px * w) / 100) + bo, int((py * h) / 100) + bo
         tw, th = int((pw * w) / 100) - (bo * 2), int((ph * h) / 100) - (bo * 2)
-        
         target_aspect = tw / th
         cw, ch = cover_pil.size
         if cw/ch > target_aspect:
@@ -99,22 +109,19 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
         else:
             nh = int(cw / target_aspect)
             crop = (0, (ch - nh)//2, cw, (ch - nh)//2 + nh)
-        
         c_res = cover_pil.crop(crop).resize((tw, th), Image.LANCZOS)
-        
         tmpl_l = np.array(tmpl_rgb.convert('L')).astype(np.float64)
         shadows = np.clip(tmpl_l[y1:y1+th, x1:x1+tw] / 246.0, 0, 1.0)
-        
         c_array = np.array(c_res.convert('RGB')).astype(np.float64)
-        for i in range(3): c_array[:,:,i] *= shadows
-        
+        for i in range(3):
+            c_array[:,:,i] *= shadows
         final_face = Image.fromarray(c_array.astype(np.uint8))
-        if c_res.mode == 'RGBA': 
+        if c_res.mode == 'RGBA':
             tmpl_rgb.paste(final_face, (x1, y1), c_res)
-        else: 
+        else:
             tmpl_rgb.paste(final_face, (x1, y1))
-        
-        if has_alpha: tmpl_rgb.putalpha(alpha_mask)
+        if has_alpha:
+            tmpl_rgb.putalpha(alpha_mask)
         return tmpl_rgb
 
     # 2. AUTO-DETECTION
@@ -122,22 +129,19 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
     bg_val = float(np.median(corners))
     region = find_book_region(tmpl_gray, bg_val)
-    
     if region is None or (region['book_x2'] - region['book_x1'] > w * 0.95):
         margin_x, margin_y = int(w * 0.2), int(h * 0.1)
         bx1, bx2, by1, by2 = margin_x, w - margin_x, margin_y, h - margin_y
     else:
         bx1, bx2, by1, by2 = region['book_x1'], region['book_x2'], region['book_y1'], region['book_y2']
-    
-    # FIX STREAMLIT MAGIC: Sostituita sintassi errata con sintassi standard
+
     if "base_copertina" in template_name.lower():
         bx1, bx2, by1, by2 = 0, w-1, 0, h-1
-        
-        for x in range(w): 
+        for x in range(w):
             if np.any(tmpl_gray[:, x] < 250):
                 bx1 = x
                 break
-        for x in range(w-1, -1, -1): 
+        for x in range(w-1, -1, -1):
             if np.any(tmpl_gray[:, x] < 250):
                 bx2 = x
                 break
@@ -149,30 +153,30 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
             if np.any(tmpl_gray[y, :] < 250):
                 by2 = y
                 break
-                
-        bx1, bx2 = max(0, bx1 - 2), min(w - 1, bx2 + 2)
-        by1, by2 = max(0, by1 - 2), min(h - 1, by2 + 2)
-        
+
+    bx1, bx2 = max(0, bx1 - 2), min(w - 1, bx2 + 2)
+    by1, by2 = max(0, by1 - 2), min(h - 1, by2 + 2)
     tw, th = bx2 - bx1 + 1, by2 - by1 + 1
     c_res = cover_pil.resize((tw, th), Image.LANCZOS)
     c_arr = np.array(c_res.convert('RGB')).astype(np.float64)
     sh = np.clip(tmpl_gray[by1:by2+1, bx1:bx2+1] / 246.0, 0, 1.0)
-    for i in range(3): c_arr[:,:,i] *= sh
-    
+    for i in range(3):
+        c_arr[:,:,i] *= sh
     final_face = Image.fromarray(c_arr.astype(np.uint8))
-    if c_res.mode == 'RGBA': 
+    if c_res.mode == 'RGBA':
         tmpl_rgb.paste(final_face, (bx1, by1), c_res)
-    else: 
+    else:
         tmpl_rgb.paste(final_face, (bx1, by1))
-    
-    if has_alpha: tmpl_rgb.putalpha(alpha_mask)
+    if has_alpha:
+        tmpl_rgb.putalpha(alpha_mask)
     return tmpl_rgb
 
 # --- LIBRERIA ---
 @st.cache_data
 def get_lib(h_val):
     lib = {"Verticali": {}, "Orizzontali": {}, "Quadrati": {}, "Altro": {}}
-    if not os.path.exists("templates"): return lib
+    if not os.path.exists("templates"):
+        return lib
     for f in os.listdir("templates"):
         if f.lower().endswith(('.jpg', '.png', '.jpeg')):
             lib[get_manual_cat(f)][f] = Image.open(os.path.join("templates", f))
@@ -185,7 +189,9 @@ menu = st.sidebar.radio("Menu", ["📚 Templates", "🎯 Calibrazione", "⚡ Pro
 
 if menu == "📚 Templates":
     st.subheader("📚 Libreria Templates")
-    if st.button("🔄 RICARICA"): st.cache_data.clear(); st.rerun()
+    if st.button("🔄 RICARICA"):
+        st.cache_data.clear()
+        st.rerun()
     ts = st.tabs(list(libreria.keys()))
     for i, c in enumerate(libreria.keys()):
         with ts[i]:
@@ -200,27 +206,32 @@ elif menu == "🎯 Calibrazione":
         t_img = libreria[cat][sel]
         d = TEMPLATE_MAPS.get(sel, {"coords": (20, 10, 60, 80), "offset": 1})
         if 'cal' not in st.session_state or st.session_state.get('cur') != sel:
-            st.session_state.cal = d; st.session_state.cur = sel
-        
-        c = st.session_state.cal["coords"]
+            st.session_state.cal = d
+            st.session_state.cur = sel
+        c = list(st.session_state.cal["coords"])
+        st.session_state.cal["coords"] = c
         col1, col2 = st.columns(2)
         c[0] = col1.number_input("X %", 0.0, 100.0, float(c[0]))
         c[1] = col2.number_input("Y %", 0.0, 100.0, float(c[1]))
         c[2] = col1.number_input("W %", 0.0, 100.0, float(c[2]))
         c[3] = col2.number_input("H %", 0.0, 100.0, float(c[3]))
         st.session_state.cal["offset"] = st.slider("Offset", 0, 20, int(st.session_state.cal["offset"]))
-        
         p_img = t_img.copy().convert('RGB')
-        draw = ImageDraw.Draw(p_img); w, h = p_img.size
-        draw.rectangle([int(c[0]*w/100), int(c[1]*h/100), int((c[0]+c[2])*w/100), int((c[1]+c[3])*h/100)], outline="red", width=5)
+        draw = ImageDraw.Draw(p_img)
+        w, h = p_img.size
+        draw.rectangle(
+            [int(c[0]*w/100), int(c[1]*h/100), int((c[0]+c[2])*w/100), int((c[1]+c[3])*h/100)],
+            outline="red", width=5
+        )
         st.image(p_img, use_column_width=True)
         if st.button("💾 SALVA"):
-            TEMPLATE_MAPS[sel] = st.session_state.cal; save_template_maps(TEMPLATE_MAPS); st.success("Salvate!")
+            TEMPLATE_MAPS[sel] = st.session_state.cal
+            save_template_maps(TEMPLATE_MAPS)
+            st.success("Salvate!")
 
 elif menu == "⚡ Produzione":
     scelta = st.radio("Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
     up = st.file_uploader("Carica design", type=['jpg', 'png'], key='preview')
-    
     if up and libreria[scelta]:
         d_img = Image.open(up)
         cols = st.columns(4)
@@ -228,7 +239,6 @@ elif menu == "⚡ Produzione":
             with cols[i%4]:
                 res = composite_v3_fixed(t_img, d_img, t_name)
                 st.image(res, caption=t_name, use_column_width=True)
-
     st.divider()
     batch = st.file_uploader("Batch Produzione", accept_multiple_files=True)
     if st.button("🚀 GENERA TUTTI") and batch and libreria[scelta]:
@@ -239,31 +249,27 @@ elif menu == "⚡ Produzione":
             count = 0
             for b_file in batch:
                 b_img = Image.open(b_file)
-                
-                # NOME CARTELLA PULITO
                 base_name = os.path.splitext(b_file.name)[0]
-                if base_name.lower().endswith('.png'): base_name = base_name[:-4]
-                
+                if base_name.lower().endswith('.png'):
+                    base_name = base_name[:-4]
                 for t_name, t_img in libreria[scelta].items():
                     res = composite_v3_fixed(t_img, b_img, t_name)
-                    
                     is_tmpl_png = t_name.lower().endswith('.png') or res.mode == 'RGBA'
                     save_fmt = 'PNG' if is_tmpl_png else 'JPEG'
                     save_ext = '.png' if is_tmpl_png else '.jpg'
-                    
                     buf = io.BytesIO()
                     if save_fmt == 'PNG':
                         res.save(buf, format='PNG')
                     else:
                         res.save(buf, format='JPEG', quality=95)
-                    
                     t_clean = os.path.splitext(t_name)[0]
-                    if t_clean.lower().endswith('.png'): t_clean = t_clean[:-4]
-                    
+                    if t_clean.lower().endswith('.png'):
+                        t_clean = t_clean[:-4]
                     zf.writestr(f"{base_name}/{t_clean}{save_ext}", buf.getvalue())
-                    count += 1; progress.progress(count/total)
-        st.session_state.zip_ready, st.session_state.zip_data = True, zip_buf.getvalue()
+                    count += 1
+                    progress.progress(count/total)
+        st.session_state.zip_ready = True
+        st.session_state.zip_data = zip_buf.getvalue()
         st.success("Tutto pronto!")
-
     if st.session_state.get('zip_ready'):
         st.download_button("📥 SCARICA ZIP", st.session_state.zip_data, f"Mockups_{scelta}.zip", "application/zip")
