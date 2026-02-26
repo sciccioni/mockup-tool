@@ -265,7 +265,15 @@ elif menu == "⚡ Produzione":
                     t_clean = os.path.splitext(t_name)[0]
                     if t_clean.lower().endswith('.png'):
                         t_clean = t_clean[:-4]
-                    zf.writestr(f"{base_name}/{t_clean}{save_ext}", buf.getvalue())
+                    
+                    # --- MODIFICA RICHIESTA: Estrazione del formato ---
+                    # Prende la prima parte del nome template (prima del '-')
+                    formato = t_clean.split('-')[0] if '-' in t_clean else t_clean
+                    nuovo_nome = f"{formato}-{base_name}{save_ext}"
+                    
+                    zf.writestr(f"{base_name}/{nuovo_nome}", buf.getvalue())
+                    # --------------------------------------------------
+                    
                     count += 1
                     progress.progress(count/total)
         st.session_state.zip_ready = True
