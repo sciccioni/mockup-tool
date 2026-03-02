@@ -82,7 +82,6 @@ def find_book_region(tmpl_gray, bg_val):
     }
 
 def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None):
-    # SALVA LA TRASPARENZA ORIGINALE
     has_alpha = False
     alpha_mask = None
     if (tmpl_pil.mode in ('RGBA', 'LA') or
@@ -95,7 +94,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
     tmpl_rgb = tmpl_pil.convert('RGB')
     h, w = tmpl_rgb.size[1], tmpl_rgb.size[0]
 
-    # 1. PRECISION MAPPING
     if template_name in TEMPLATE_MAPS:
         d = TEMPLATE_MAPS[template_name]
         px, py, pw, ph = d["coords"]
@@ -125,7 +123,6 @@ def composite_v3_fixed(tmpl_pil, cover_pil, template_name="", border_offset=None
             tmpl_rgb.putalpha(alpha_mask)
         return tmpl_rgb
 
-    # 2. AUTO-DETECTION
     tmpl_gray = np.array(tmpl_rgb.convert('L'))
     corners = [tmpl_gray[3,3], tmpl_gray[3,w-3], tmpl_gray[h-3,3], tmpl_gray[h-3,w-3]]
     bg_val = float(np.median(corners))
@@ -266,15 +263,9 @@ elif menu == "⚡ Produzione":
                     t_clean = os.path.splitext(t_name)[0]
                     if t_clean.lower().endswith('.png'):
                         t_clean = t_clean[:-4]
-                    
-                    # --- MODIFICA RICHIESTA: Estrazione del formato ---
-                    # Prende la prima parte del nome template (prima del '-')
                     formato = t_clean.split('-')[0] if '-' in t_clean else t_clean
                     nuovo_nome = f"{formato}-{base_name}{save_ext}"
-                    
                     zf.writestr(f"{base_name}/{nuovo_nome}", buf.getvalue())
-                    # --------------------------------------------------
-                    
                     count += 1
                     progress.progress(count/total)
         st.session_state.zip_ready = True
