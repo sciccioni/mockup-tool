@@ -53,7 +53,7 @@ def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["vertical", "15x22", "20x30", "bottom", "copertina_verticale"]):
         return "Verticali"
-    if any(x in fn for x in ["orizzontal", "orrizontale", "20x15", "27x20", "32x24", "40x30"]):
+    if any(x in fn for x in ["orizzontal", "orrizontale", "bottom-app.png", "20x15", "27x20", "32x24", "40x30"]):
         return "Orizzontali"
     if any(x in fn for x in ["quadrat", "20x20", "30x30"]):
         return "Quadrati"
