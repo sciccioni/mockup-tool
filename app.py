@@ -32,7 +32,7 @@ def load_template_maps():
         "20x30-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
         "Fotolibro-Temi-Verticali-temi-2.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
         "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
-        "orrizontale-preview-app.png": {"coords": (3.17, 4.51, 92.16, 90.0), "offset": 1}
+        "bottom-app.png": {"coords": (3.17, 4.51, 92.16, 90.0), "offset": 1}
     }
     if os.path.exists(TEMPLATE_MAPS_FILE):
         try:
