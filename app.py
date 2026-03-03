@@ -32,7 +32,7 @@ def load_template_maps():
         "20x30-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
         "Fotolibro-Temi-Verticali-temi-2.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
         "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
-        "bottom-app.png": {"coords": (3.17, 4.51, 92.16, 90.0), "offset": 1}
+        "orrizontale-preview-app.png": {"coords": (3.17, 4.51, 92.16, 90.0), "offset": 1}
     }
     if os.path.exists(TEMPLATE_MAPS_FILE):
         try:
@@ -53,7 +53,7 @@ def get_manual_cat(filename):
     fn = filename.lower()
     if any(x in fn for x in ["vertical", "15x22", "20x30", "bottom", "copertina_verticale"]):
         return "Verticali"
-    if any(x in fn for x in ["orizzontal", "orrizontale", "bottom-app.png", "20x15", "27x20", "32x24", "40x30"]):
+    if any(x in fn for x in ["orizzontal", "orrizontale", "orrizontale-preview-app", "20x15", "27x20", "32x24", "40x30"]):
         return "Orizzontali"
     if any(x in fn for x in ["quadrat", "20x20", "30x30"]):
         return "Quadrati"
