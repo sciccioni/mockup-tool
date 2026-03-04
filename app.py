@@ -187,9 +187,69 @@ menu = st.sidebar.radio("Menu", ["📚 Templates", "🎯 Calibrazione", "⚡ Pro
 
 if menu == "📚 Templates":
     st.subheader("📚 Libreria Templates")
-    if st.button("🔄 RICARICA"):
-        st.cache_data.clear()
-        st.rerun()
+
+    col_btn1, col_btn2 = st.columns([1, 3])
+    with col_btn1:
+        if st.button("🔄 RICARICA"):
+            st.cache_data.clear()
+            st.rerun()
+
+    st.divider()
+
+    # --- UPLOAD NUOVI TEMPLATE ---
+    with st.expander("➕ Aggiungi / Sostituisci Template", expanded=False):
+        uploaded_templates = st.file_uploader(
+            "Carica uno o più template (JPG, PNG)",
+            type=['jpg', 'jpeg', 'png'],
+            accept_multiple_files=True,
+            key=f"tmpl_upload_{st.session_state.uploader_key}"
+        )
+
+        if uploaded_templates:
+            existing = os.listdir("templates") if os.path.exists("templates") else []
+            sostituzioni = [f.name for f in uploaded_templates if f.name in existing]
+            nuovi = [f.name for f in uploaded_templates if f.name not in existing]
+
+            if sostituzioni:
+                st.warning(f"⚠️ Questi file verranno **sostituiti**: {', '.join(sostituzioni)}")
+            if nuovi:
+                st.info(f"✅ Nuovi template: {', '.join(nuovi)}")
+
+            if st.button("💾 SALVA TEMPLATE"):
+                os.makedirs("templates", exist_ok=True)
+                salvati = []
+                for f in uploaded_templates:
+                    dest = os.path.join("templates", f.name)
+                    with open(dest, "wb") as out:
+                        out.write(f.getbuffer())
+                    salvati.append(f.name)
+                st.success(f"Salvati: {', '.join(salvati)}")
+                st.session_state.uploader_key += 1
+                st.cache_data.clear()
+                st.rerun()
+
+    # --- ELIMINA TEMPLATE ---
+    with st.expander("🗑️ Elimina Template", expanded=False):
+        all_templates = []
+        if os.path.exists("templates"):
+            all_templates = [f for f in os.listdir("templates") if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+
+        if all_templates:
+            da_eliminare = st.multiselect("Seleziona template da eliminare:", all_templates)
+            if da_eliminare and st.button("🗑️ ELIMINA SELEZIONATI", type="primary"):
+                for fn in da_eliminare:
+                    path = os.path.join("templates", fn)
+                    if os.path.exists(path):
+                        os.remove(path)
+                st.success(f"Eliminati: {', '.join(da_eliminare)}")
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.info("Nessun template presente.")
+
+    st.divider()
+
+    # --- VISUALIZZAZIONE LIBRERIA ---
     ts = st.tabs(list(libreria.keys()))
     for i, c in enumerate(libreria.keys()):
         with ts[i]:
