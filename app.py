@@ -5,6 +5,8 @@ import os
 import io
 import zipfile
 import json
+import requests
+import base64
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FIXED", layout="wide")
@@ -20,31 +22,84 @@ def get_folder_hash(folder_path):
 
 # --- COORDINATE ---
 TEMPLATE_MAPS_FILE = "template_coordinates.json"
+GITHUB_REPO = "sciccioni/mockup-tool"
+GITHUB_PATH = "template_coordinates.json"
+GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+
+DEFAULT_MAPS = {
+    "base_verticale_temi_app.jpg": {"coords": (34.4, 9.1, 30.6, 80.4), "offset": 1},
+    "base_orizzontale_temi_app.jpg": {"coords": (18.9, 9.4, 61.9, 83.0), "offset": 1},
+    "base_orizzontale_temi_app3.jpg": {"coords": (18.7, 9.4, 62.2, 82.9), "offset": 1},
+    "base_quadrata_temi_app.jpg": {"coords": (27.7, 10.5, 44.7, 44.7), "offset": 1},
+    "base_bottom_app.jpg": {"coords": (21.8, 4.7, 57.0, 91.7), "offset": 1},
+    "15x22-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
+    "20x30-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
+    "Fotolibro-Temi-Verticali-temi-2.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
+    "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
+    "orrizontale-preview-app.png": {"coords": (3.17, 4.51, 92.16, 90.0), "offset": 1}
+}
+
+def get_github_headers():
+    token = st.secrets.get("GITHUB_TOKEN", "")
+    return {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
 
 def load_template_maps():
-    default_maps = {
-        "base_verticale_temi_app.jpg": {"coords": (34.4, 9.1, 30.6, 80.4), "offset": 1},
-        "base_orizzontale_temi_app.jpg": {"coords": (18.9, 9.4, 61.9, 83.0), "offset": 1},
-        "base_orizzontale_temi_app3.jpg": {"coords": (18.7, 9.4, 62.2, 82.9), "offset": 1},
-        "base_quadrata_temi_app.jpg": {"coords": (27.7, 10.5, 44.7, 44.7), "offset": 1},
-        "base_bottom_app.jpg": {"coords": (21.8, 4.7, 57.0, 91.7), "offset": 1},
-        "15x22-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
-        "20x30-crea la tua grafica.jpg": {"coords": (33.1, 21.4, 33.9, 57.0), "offset": 2},
-        "Fotolibro-Temi-Verticali-temi-2.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
-        "Fotolibro-Temi-Verticali-temi-3.png": {"coords": (13.6, 4.0, 73.0, 92.0), "offset": 1},
-        "orrizontale-preview-app.png": {"coords": (3.17, 4.51, 92.16, 90.0), "offset": 1}
-    }
+    try:
+        resp = requests.get(GITHUB_API, headers=get_github_headers(), timeout=5)
+        if resp.status_code == 200:
+            content = resp.json().get("content", "")
+            decoded = base64.b64decode(content).decode("utf-8")
+            return json.loads(decoded)
+    except Exception:
+        pass
+    # fallback: prova file locale
     if os.path.exists(TEMPLATE_MAPS_FILE):
         try:
             with open(TEMPLATE_MAPS_FILE, 'r') as f:
                 return json.load(f)
-        except:
-            return default_maps
-    return default_maps
+        except Exception:
+            pass
+    return DEFAULT_MAPS
 
 def save_template_maps(maps):
-    with open(TEMPLATE_MAPS_FILE, 'w') as f:
-        json.dump(maps, f, indent=2)
+    content = json.dumps(maps, indent=2)
+    encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+    headers = get_github_headers()
+
+    # recupera SHA del file attuale (necessario per aggiornare)
+    sha = None
+    try:
+        resp = requests.get(GITHUB_API, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            sha = resp.json().get("sha")
+    except Exception:
+        pass
+
+    payload = {
+        "message": "Update template_coordinates.json",
+        "content": encoded,
+        "branch": "main"
+    }
+    if sha:
+        payload["sha"] = sha
+
+    try:
+        resp = requests.put(GITHUB_API, headers=headers, json=payload, timeout=10)
+        if resp.status_code in (200, 201):
+            return True
+    except Exception:
+        pass
+
+    # fallback: salva in locale se GitHub fallisce
+    try:
+        with open(TEMPLATE_MAPS_FILE, 'w') as f:
+            f.write(content)
+    except Exception:
+        pass
+    return False
 
 TEMPLATE_MAPS = load_template_maps()
 
@@ -284,8 +339,11 @@ elif menu == "🎯 Calibrazione":
         st.image(p_img, use_column_width=True)
         if st.button("💾 SALVA"):
             TEMPLATE_MAPS[sel] = st.session_state.cal
-            save_template_maps(TEMPLATE_MAPS)
-            st.success("Salvate!")
+            ok = save_template_maps(TEMPLATE_MAPS)
+            if ok:
+                st.success("✅ Salvate su GitHub!")
+            else:
+                st.warning("⚠️ Salvate in locale (GitHub non raggiungibile)")
 
 elif menu == "⚡ Produzione":
     scelta = st.radio("Formato:", ["Verticali", "Orizzontali", "Quadrati"], horizontal=True)
