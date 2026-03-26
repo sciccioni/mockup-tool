@@ -14,6 +14,19 @@ st.set_page_config(page_title="PhotoBook Mockup Compositor - V3 FIXED", layout="
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
+# --- GITHUB CONFIG ---
+GITHUB_REPO = "sciccioni/mockup-tool"
+GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/contents"
+GITHUB_TEMPLATES_PATH = "templates"
+GITHUB_COORDS_PATH = "template_coordinates.json"
+
+def get_github_headers():
+    token = st.secrets.get("GITHUB_TOKEN", "")
+    return {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
 # --- ANTI-CACHE ---
 def get_folder_hash(folder_path):
     if not os.path.exists(folder_path):
@@ -21,11 +34,6 @@ def get_folder_hash(folder_path):
     return sum(os.path.getmtime(os.path.join(folder_path, f)) for f in os.listdir(folder_path))
 
 # --- COORDINATE ---
-TEMPLATE_MAPS_FILE = "template_coordinates.json"
-GITHUB_REPO = "sciccioni/mockup-tool"
-GITHUB_PATH = "template_coordinates.json"
-GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
-
 DEFAULT_MAPS = {
     "base_verticale_temi_app.jpg": {"coords": (34.4, 9.1, 30.6, 80.4), "offset": 1},
     "base_orizzontale_temi_app.jpg": {"coords": (18.9, 9.4, 61.9, 83.0), "offset": 1},
@@ -39,26 +47,18 @@ DEFAULT_MAPS = {
     "orrizontale-preview-app.png": {"coords": (3.17, 4.51, 92.16, 90.0), "offset": 1}
 }
 
-def get_github_headers():
-    token = st.secrets.get("GITHUB_TOKEN", "")
-    return {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-
 def load_template_maps():
     try:
-        resp = requests.get(GITHUB_API, headers=get_github_headers(), timeout=5)
+        resp = requests.get(f"{GITHUB_API}/{GITHUB_COORDS_PATH}", headers=get_github_headers(), timeout=5)
         if resp.status_code == 200:
             content = resp.json().get("content", "")
             decoded = base64.b64decode(content).decode("utf-8")
             return json.loads(decoded)
     except Exception:
         pass
-    # fallback: prova file locale
-    if os.path.exists(TEMPLATE_MAPS_FILE):
+    if os.path.exists(GITHUB_COORDS_PATH):
         try:
-            with open(TEMPLATE_MAPS_FILE, 'r') as f:
+            with open(GITHUB_COORDS_PATH, 'r') as f:
                 return json.load(f)
         except Exception:
             pass
@@ -68,38 +68,85 @@ def save_template_maps(maps):
     content = json.dumps(maps, indent=2)
     encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
     headers = get_github_headers()
-
-    # recupera SHA del file attuale (necessario per aggiornare)
     sha = None
     try:
-        resp = requests.get(GITHUB_API, headers=headers, timeout=5)
+        resp = requests.get(f"{GITHUB_API}/{GITHUB_COORDS_PATH}", headers=headers, timeout=5)
         if resp.status_code == 200:
             sha = resp.json().get("sha")
     except Exception:
         pass
-
-    payload = {
-        "message": "Update template_coordinates.json",
-        "content": encoded,
-        "branch": "main"
-    }
+    payload = {"message": "Update template_coordinates.json", "content": encoded, "branch": "main"}
     if sha:
         payload["sha"] = sha
-
     try:
-        resp = requests.put(GITHUB_API, headers=headers, json=payload, timeout=10)
+        resp = requests.put(f"{GITHUB_API}/{GITHUB_COORDS_PATH}", headers=headers, json=payload, timeout=10)
         if resp.status_code in (200, 201):
             return True
     except Exception:
         pass
+    return False
 
-    # fallback: salva in locale se GitHub fallisce
+# --- TEMPLATE GITHUB ---
+def get_github_sha(path):
     try:
-        with open(TEMPLATE_MAPS_FILE, 'w') as f:
-            f.write(content)
+        resp = requests.get(f"{GITHUB_API}/{path}", headers=get_github_headers(), timeout=5)
+        if resp.status_code == 200:
+            return resp.json().get("sha")
     except Exception:
         pass
-    return False
+    return None
+
+def upload_template_github(filename, file_bytes):
+    path = f"{GITHUB_TEMPLATES_PATH}/{filename}"
+    encoded = base64.b64encode(file_bytes).decode("utf-8")
+    sha = get_github_sha(path)
+    payload = {"message": f"Add/update template {filename}", "content": encoded, "branch": "main"}
+    if sha:
+        payload["sha"] = sha
+    try:
+        resp = requests.put(f"{GITHUB_API}/{path}", headers=get_github_headers(), json=payload, timeout=30)
+        return resp.status_code in (200, 201)
+    except Exception:
+        return False
+
+def delete_template_github(filename):
+    path = f"{GITHUB_TEMPLATES_PATH}/{filename}"
+    sha = get_github_sha(path)
+    if not sha:
+        return False
+    payload = {"message": f"Delete template {filename}", "sha": sha, "branch": "main"}
+    try:
+        resp = requests.delete(f"{GITHUB_API}/{path}", headers=get_github_headers(), json=payload, timeout=10)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+def sync_templates_from_github():
+    """Scarica i template da GitHub nella cartella locale templates/"""
+    os.makedirs("templates", exist_ok=True)
+    try:
+        resp = requests.get(f"{GITHUB_API}/{GITHUB_TEMPLATES_PATH}", headers=get_github_headers(), timeout=10)
+        if resp.status_code != 200:
+            return False
+        files = resp.json()
+        for f in files:
+            if not f["name"].lower().endswith(('.jpg', '.jpeg', '.png')):
+                continue
+            local_path = os.path.join("templates", f["name"])
+            if not os.path.exists(local_path):
+                dl = requests.get(f["download_url"], timeout=15)
+                if dl.status_code == 200:
+                    with open(local_path, "wb") as out:
+                        out.write(dl.content)
+        return True
+    except Exception:
+        return False
+
+# --- SYNC ALL'AVVIO ---
+if 'templates_synced' not in st.session_state:
+    with st.spinner("Sincronizzazione template da GitHub..."):
+        sync_templates_from_github()
+    st.session_state.templates_synced = True
 
 TEMPLATE_MAPS = load_template_maps()
 
@@ -246,6 +293,7 @@ if menu == "📚 Templates":
     col_btn1, col_btn2 = st.columns([1, 3])
     with col_btn1:
         if st.button("🔄 RICARICA"):
+            st.session_state.templates_synced = False
             st.cache_data.clear()
             st.rerun()
 
@@ -273,12 +321,23 @@ if menu == "📚 Templates":
             if st.button("💾 SALVA TEMPLATE"):
                 os.makedirs("templates", exist_ok=True)
                 salvati = []
-                for f in uploaded_templates:
+                errori = []
+                progress = st.progress(0)
+                for idx, f in enumerate(uploaded_templates):
+                    file_bytes = f.getbuffer().tobytes()
                     dest = os.path.join("templates", f.name)
                     with open(dest, "wb") as out:
-                        out.write(f.getbuffer())
-                    salvati.append(f.name)
-                st.success(f"Salvati: {', '.join(salvati)}")
+                        out.write(file_bytes)
+                    ok = upload_template_github(f.name, file_bytes)
+                    if ok:
+                        salvati.append(f.name)
+                    else:
+                        errori.append(f.name)
+                    progress.progress((idx + 1) / len(uploaded_templates))
+                if salvati:
+                    st.success(f"✅ Salvati su GitHub: {', '.join(salvati)}")
+                if errori:
+                    st.warning(f"⚠️ Salvati solo in locale: {', '.join(errori)}")
                 st.session_state.uploader_key += 1
                 st.cache_data.clear()
                 st.rerun()
@@ -292,11 +351,21 @@ if menu == "📚 Templates":
         if all_templates:
             da_eliminare = st.multiselect("Seleziona template da eliminare:", all_templates)
             if da_eliminare and st.button("🗑️ ELIMINA SELEZIONATI", type="primary"):
+                eliminati = []
+                errori = []
                 for fn in da_eliminare:
                     path = os.path.join("templates", fn)
                     if os.path.exists(path):
                         os.remove(path)
-                st.success(f"Eliminati: {', '.join(da_eliminare)}")
+                    ok = delete_template_github(fn)
+                    if ok:
+                        eliminati.append(fn)
+                    else:
+                        errori.append(fn)
+                if eliminati:
+                    st.success(f"✅ Eliminati da GitHub: {', '.join(eliminati)}")
+                if errori:
+                    st.warning(f"⚠️ Eliminati solo in locale: {', '.join(errori)}")
                 st.cache_data.clear()
                 st.rerun()
         else:
