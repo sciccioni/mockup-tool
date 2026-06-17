@@ -232,5 +232,14 @@
       70.0
     ],
     "offset": 1
+  },
+  "template-verticale2.png": {
+    "coords": [
+      25.0,
+      14.95,
+      50.0,
+      70.0
+    ],
+    "offset": 1
   }
 }
