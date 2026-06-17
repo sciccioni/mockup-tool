@@ -223,5 +223,14 @@
       70.5
     ],
     "offset": 1
+  },
+  "template verticale2.png": {
+    "coords": [
+      26.0,
+      15.0,
+      47.9,
+      70.0
+    ],
+    "offset": 1
   }
 }
